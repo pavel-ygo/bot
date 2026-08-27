@@ -7,6 +7,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from .config import ConfigError, load_config
@@ -40,6 +41,19 @@ async def main() -> None:
         rt.yookassa = YooKassaProvider(cfg.yookassa_shop_id, cfg.yookassa_secret)
 
     bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        me = await bot.get_me()
+    except TelegramUnauthorizedError:
+        raise SystemExit(
+            "❌ Telegram отклонил BOT_TOKEN — токен неверный или отозван.\n"
+            "   Откройте файл .env в корне проекта (рядом с docker-compose.yml),\n"
+            "   исправьте строку BOT_TOKEN=... и пересоздайте контейнер:\n"
+            "   docker compose up -d\n"
+            "   Токен вида 123456789:AA... выдаёт @BotFather (/mybots → API Token).\n"
+            "   Проверить токен вручную: curl -s https://api.telegram.org/bot<ТОКЕН>/getMe"
+        )
+    rt.bot_username = me.username
+
     dp = Dispatcher(storage=MemoryStorage())
     dp["rt"] = rt
 
@@ -47,8 +61,6 @@ async def main() -> None:
     dp.include_router(buy.router)
     dp.include_router(admin.router)
 
-    me = await bot.get_me()
-    rt.bot_username = me.username
     logging.info("Запуск бота @%s | тарифов: %s | админов: %s",
                  me.username, len(cfg.tariffs), len(cfg.admin_ids))
     await bot.delete_webhook(drop_pending_updates=True)
