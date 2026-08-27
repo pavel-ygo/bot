@@ -70,6 +70,77 @@ python3 -m bot.doctor
   python3 -m bot
   ```
 
+## 🖥 Деплой на хост с Remnawave
+
+Самый удобный вариант: бот ходит в панель **напрямую по внутренней docker-сети**
+(`http://remnawave:3000`) — быстрее, не зависит от DNS/TLS публичного домена и работает
+даже если порт панели закрыт файрволом. Наружу бот ничего не публикует (портов в compose нет) —
+только исходящие соединения к Telegram и платёжным системам.
+
+### Шаг 1. Скопируйте код на сервер
+
+```bash
+# если PR ещё не смержен — клонируйте ветку:
+git clone -b arena/01a0440c-bot https://github.com/pavel-ygo/bot.git /opt/vpn-bot
+# после мержа:
+git clone https://github.com/pavel-ygo/bot.git /opt/vpn-bot
+cd /opt/vpn-bot
+```
+
+### Шаг 2. Узнайте имя docker-сети и контейнера панели
+
+```bash
+docker network ls | grep -i remna        # обычно: remnawave_network
+docker ps --format '{{.Names}}' | grep -i remna   # обычно: remnawave
+```
+
+В стандартной установке Remnawave это `remnawave_network` и `remnawave` — они уже
+подставлены по умолчанию, ничего менять не нужно.
+
+### Шаг 3. Настройте .env
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Ключевые строки для совместного хоста:
+
+```env
+REMNAWAVE_PANEL_URL=http://remnawave:3000     # контейнер панели напрямую
+REMNAWAVE_API_TOKEN=...                       # панель → Настройки → API Tokens
+REMNAWAVE_SQUAD_UUID=...                      # панель → Internal Squads
+# в конце файла раскомментируйте две строки:
+COMPOSE_FILE=docker-compose.yml:docker-compose.remna.yml
+REMNAWAVE_DOCKER_NETWORK=remnawave_network
+```
+
+> Если сеть панели называется иначе — впишите её в `REMNAWAVE_DOCKER_NETWORK`.
+
+### Шаг 4. Проверьте и запустите
+
+```bash
+docker compose run --rm vpn-bot python -m bot.doctor   # связь с панелью, ноды, squads
+docker compose up -d --build
+docker compose logs -f                                  # смотреть логи
+```
+
+`doctor` покажет ноды (обе ваши должны быть `online`), найденные Internal Squads
+и подскажет, если `REMNAWAVE_SQUAD_UUID` не совпадает с панелью.
+
+### Обновление бота
+
+```bash
+cd /opt/vpn-bot && git pull && docker compose up -d --build
+```
+
+### Альтернатива
+
+Не хотите трогать docker-сеть панели — просто оставьте
+`REMNAWAVE_PANEL_URL=https://panel.example.com` (публичный адрес) и запускайте
+обычный `docker compose up -d --build` без файла `docker-compose.remna.yml`.
+Работает так же, трафик пойдёт через Caddy.
+
 ## 💰 Приём платежей
 
 | Способ | Что нужно | Где взять |
