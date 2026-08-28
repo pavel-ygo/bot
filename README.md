@@ -246,6 +246,18 @@ curl -s https://api.telegram.org/bot<ТОКЕН>/getMe
 docker compose up -d && docker compose logs -f
 ```
 
+**В логах `TelegramConflictError: Conflict: terminated by other getUpdates request`.** —
+Где-то запущен второй экземпляр бота с тем же токеном (другой контейнер, второй сервер,
+запуск вручную в screen/tmux). Найдите и остановите его:
+
+```bash
+docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}'   # лишние контейнеры
+ps aux | grep -iE 'python.*(bot|aiogram)' | grep -v grep       # процессы на хосте
+```
+
+Не нашли — отзовите токен: @BotFather → /mybots → API Token → Revoke, впишите новый
+в `.env` и выполните `docker compose up -d`. Все посторонние копии остановятся сами.
+
 **Бот пишет «Панель недоступна».** — Проверьте `REMNAWAVE_PANEL_URL` (доступен ли он с
 сервера, где запущен бот) и не истёк ли `REMNAWAVE_API_TOKEN`.
 
