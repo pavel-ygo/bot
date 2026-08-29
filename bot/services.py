@@ -172,7 +172,87 @@ async def complete_payment(
         await bot.send_message(tg_id, text, reply_markup=kb, disable_web_page_preview=True)
     except Exception as e:
         log.warning("Не удалось отправить сообщение %s: %s", tg_id, e)
+
+    await _notify_payment(rt, bot, tg_id, payment)
+    await _credit_referral(rt, bot, tg_id, payment)
     return True
+
+
+async def _notify_payment(rt: Runtime, bot: Bot, tg_id: int, payment: dict) -> None:
+    """Короткое уведомление админам о состоявшейся оплате."""
+    tariff = rt.cfg.tariffs.get(payment["tariff_id"])
+    bot_user = await rt.db.get_bot_user(tg_id) or {}
+    name = bot_user.get("first_name") or bot_user.get("username") or str(tg_id)
+    provider_names = {
+        "stars": "Stars", "cryptobot": "CryptoBot", "yookassa": "ЮKassa",
+    }
+    cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": " USDT"}
+    amount = f"{payment['amount']}{cur_sym.get(payment['currency'], payment['currency'])}"
+    for admin_id in rt.cfg.admin_ids:
+        try:
+            await bot.send_message(
+                admin_id,
+                texts.NOTIF_PAYMENT.format(
+                    title=tariff.title if tariff else payment["tariff_id"],
+                    days=tariff.days if tariff else "?",
+                    amount=amount,
+                    provider=provider_names.get(payment["provider"], payment["provider"]),
+                    uid=tg_id, name=name,
+                    source=payment.get("source") or "—",
+                ),
+            )
+        except Exception:
+            pass
+
+
+async def _credit_referral(rt: Runtime, bot: Bot, tg_id: int, payment: dict) -> None:
+    """Если это первая оплата приглашённого пользователя — бонус рефереру."""
+    bonus_days = rt.cfg.ref_bonus_days
+    if bonus_days <= 0:
+        return
+    bot_user = await rt.db.get_bot_user(tg_id)
+    if not bot_user or not bot_user.get("referred_by"):
+        return
+    # бонус только за ПЕРВУЮ оплату приглашённого
+    if await rt.db.delivered_paid_count(tg_id) != 1:
+        return
+    try:
+        referrer = int(bot_user["referred_by"])
+    except (TypeError, ValueError):
+        return
+    if referrer == tg_id:
+        return
+
+    tariff = Tariff(id="refbonus", title="Бонус за приглашённого друга",
+                    days=bonus_days, description="")
+    try:
+        result_text, url = await deliver_subscription(rt, referrer, tariff)
+    except Exception as e:
+        log.warning("referral bonus delivery failed for %s: %s", referrer, e)
+        return
+    await rt.db.add_payment(
+        referrer, "refbonus", "refbonus", str(bonus_days), "days",
+        status="delivered", note=f"referral {tg_id} paid",
+    )
+    try:
+        await bot.send_message(
+            referrer,
+            f"🎉 Ваш друг оплатил подписку — вам <b>+{bonus_days} дн.</b> в подарок!\n\n"
+            + result_text,
+            reply_markup=subscription_kb(url),
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        pass
+    for admin_id in rt.cfg.admin_ids:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"👥 Реферал оплатил: <code>{tg_id}</code> → бонус "
+                f"+{bonus_days} дн. для <code>{referrer}</code>",
+            )
+        except Exception:
+            pass
 
 
 def subscription_kb(sub_url: str | None) -> InlineKeyboardMarkup:
@@ -223,9 +303,7 @@ async def check_reminders(rt: Runtime, bot: Bot) -> tuple[int, int]:
             texts.REMINDER_EXPIRED if code == "expired" else texts.REMINDER_SOON.format(when=when)
         )
         try:
-            await bot.send_message(
-                tg_id, text, reply_markup=main_menu(support_url=rt.cfg.support_url)
-            )
+            await bot.send_message(tg_id, text, reply_markup=main_menu())
             await rt.db.set_reminder(tg_id, code)
             sent += 1
         except Exception:

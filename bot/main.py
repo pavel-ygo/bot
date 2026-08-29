@@ -12,8 +12,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from .config import ConfigError, load_config
 from .db import Database
-from .handlers import admin, admin_extra, bonus, buy, user
-from .jobs import payment_poller, reminders_loop
+from .handlers import admin, admin_extra, bonus, buy, support, user
+from .jobs import db_backup_loop, payment_poller, reminders_loop
 from .payments import CryptoBotProvider, YooKassaProvider
 from .remnawave import RemnawaveClient
 from .services import Runtime
@@ -62,6 +62,7 @@ async def main() -> None:
     dp.include_router(bonus.router)
     dp.include_router(admin.router)
     dp.include_router(admin_extra.router)
+    dp.include_router(support.router)
 
     logging.info("Запуск бота @%s | тарифов: %s | админов: %s",
                  me.username, len(cfg.tariffs), len(cfg.admin_ids))
@@ -70,6 +71,7 @@ async def main() -> None:
     tasks = [
         asyncio.create_task(payment_poller(rt, bot), name="payment-poller"),
         asyncio.create_task(reminders_loop(rt, bot), name="reminders"),
+        asyncio.create_task(db_backup_loop(rt), name="db-backup"),
     ]
     try:
         await dp.start_polling(bot)

@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from .. import texts
+from ..config import Tariff
 from ..keyboards import (
+    csv_menu,
+    user_card_menu,
     admin_menu,
     campaign_list_menu,
     pay_toggles_menu,
@@ -18,8 +22,19 @@ from ..keyboards import (
     promo_list_menu,
     trial_settings_menu,
 )
-from ..services import Runtime, trial_config
+from ..remnawave import RemnaError
+from ..services import Runtime, deliver_subscription, subscription_kb, trial_config
 from ..utils import fmt_date, parse_iso, utcnow
+
+
+async def _resolve_target(rt: Runtime, target: str) -> dict | None:
+    """TG ID или логин Remnawave -> пользователь панели."""
+    target = target.strip().lstrip("@")
+    if target.isdigit():
+        user = await rt.remna.get_user_by_telegram_id(int(target))
+        if user:
+            return user
+    return await rt.remna.get_user_by_username(target)
 
 router = Router(name="admin-extra")
 
@@ -198,15 +213,16 @@ async def _camp_list_text(rt: Runtime) -> str:
     stats = await rt.db.campaign_stats()
     if not campaigns:
         return texts.ADMIN_CAMP.format(list=texts.ADMIN_CAMP_EMPTY)
-    lines = "".join(
-        texts.ADMIN_CAMP_LINE.format(
-            name=c["name"],
-            users=stats.get(c["name"], {}).get("users", 0),
-            paid=stats.get(c["name"], {}).get("paid", 0),
-            revenue=_revenue_str(stats.get(c["name"], {}).get("revenue", {})),
+    lines = ""
+    for c in campaigns:
+        item = stats.get(c["name"], {})
+        users = item.get("users", 0)
+        paid = item.get("paid", 0)
+        conv = f"{paid / users * 100:.0f}%" if users else "—"
+        lines += texts.ADMIN_CAMP_LINE.format(
+            name=c["name"], users=users, paid=paid, conv=conv,
+            revenue=_revenue_str(item.get("revenue", {})),
         )
-        for c in campaigns
-    )
     return texts.ADMIN_CAMP.format(list=lines)
 
 
@@ -423,3 +439,265 @@ async def cb_pay_toggle(query: CallbackQuery, rt: Runtime):
     text, kb = await _pay_text_and_kb(rt)
     await query.message.edit_text(text, reply_markup=kb)
     await query.answer("Сохранено")
+
+
+# ══════════════════════════ КАРТОЧКА ПОЛЬЗОВАТЕЛЯ ══════════════════════════
+
+
+class UserCardFSM(StatesGroup):
+    target = State()
+    extend_days = State()
+
+
+async def _render_user_card(rt: Runtime, rw_user: dict | None, target: str) -> tuple[str, Any]:
+    """Собирает карточку. rw_user может быть None (нет в Remnawave)."""
+    tg_id = None
+    bot_user = None
+    if target.isdigit():
+        tg_id = int(target)
+        bot_user = await rt.db.get_bot_user(tg_id)
+    elif rw_user and rw_user.get("telegramId"):
+        try:
+            tg_id = int(rw_user["telegramId"])
+        except (TypeError, ValueError):
+            tg_id = None
+        bot_user = await rt.db.get_bot_user(tg_id)
+
+    payments = await rt.db.payments_for_user(tg_id, limit=5) if tg_id else []
+    if payments:
+        lines = ""
+        cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": " USDT"}
+        status_ru = {"delivered": "✅", "paid": "✅", "pending": "⏳",
+                     "canceled": "❌", "error": "⚠️"}
+        for pay in payments:
+            created = parse_iso(pay["created_at"])
+            lines += (
+                f"├ #{pay['id']} {fmt_date(created, rt.cfg.tz)} — "
+                f"{pay['amount']}{cur_sym.get(pay['currency'], '')} "
+                f"({pay['provider']}) {status_ru.get(pay['status'], pay['status'])}\n"
+            )
+    else:
+        lines = "├ " + texts.ADMIN_USER_NO_PAYMENTS + "\n"
+
+    source = "— напрямую"
+    if bot_user:
+        if bot_user.get("source"):
+            source = f"реклама «{bot_user['source']}»"
+        elif bot_user.get("referred_by"):
+            source = f"реферал <code>{bot_user['referred_by']}</code>"
+
+    referrals = await rt.db.count_referrals(tg_id) if tg_id else 0
+    paid_ref = await rt.db.paid_referrals(tg_id) if tg_id else 0
+
+    if rw_user:
+        from ..utils import fmt_bytes
+
+        expire = parse_iso(rw_user.get("expireAt"))
+        used = rw_user.get("usedTrafficBytes")
+        if used is None:
+            used = (rw_user.get("userTraffic") or {}).get("usedTrafficBytes")
+        traffic = fmt_bytes(used)
+        limit_b = rw_user.get("trafficLimitBytes")
+        if limit_b:
+            traffic += " / " + fmt_bytes(limit_b)
+        rw_block = {
+            "rw_username": rw_user.get("username", "—"),
+            "rw_status": rw_user.get("status", "—"),
+            "expire": fmt_date(expire, rt.cfg.tz),
+            "traffic": traffic,
+        }
+    else:
+        rw_block = {
+            "rw_username": "— (нет в Remnawave)",
+            "rw_status": "—",
+            "expire": "—",
+            "traffic": "—",
+        }
+
+    if tg_id:
+        name = bot_user.get("first_name") if bot_user else None
+        uname = bot_user.get("username") if bot_user else None
+        tg_line = (
+            f"<a href=\"tg://user?id={tg_id}\">{name or uname or tg_id}</a> (<code>{tg_id}</code>)"
+        )
+    else:
+        tg_line = texts.ADMIN_USER_NOT_IN_BOT
+
+    text = texts.ADMIN_USER_CARD.format(
+        tg_line=tg_line,
+        referrals=referrals,
+        paid_ref=paid_ref,
+        trial=("использован" if bot_user and bot_user.get("trial_used") else "нет"),
+        payments=lines,
+        source=source,
+        **rw_block,
+    )
+    disabled = bool(rw_user and str(rw_user.get("status", "")).upper() == "DISABLED")
+    kb = user_card_menu(tg_id, rw_user.get("uuid") if rw_user else None, disabled)
+    return text, kb
+
+
+@router.callback_query(F.data == "adm:user")
+async def cb_user_card(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(UserCardFSM.target)
+    await query.message.edit_text(texts.ADMIN_USER_ASK)
+    await query.answer()
+
+
+@router.message(UserCardFSM.target)
+async def user_card_input(message: Message, state: FSMContext, rt: Runtime):
+    target = (message.text or "").strip().lstrip("@")
+    if target.lower() == "/cancel":
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not target:
+        return
+    rw_user = await _resolve_target(rt, target)
+    if rw_user is None and not target.isdigit():
+        await message.answer(texts.ADMIN_USER_NOT_FOUND)
+        return
+    await state.clear()
+    await state.update_data(uc_target=target)
+    text, kb = await _render_user_card(rt, rw_user, target)
+    await message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+
+
+@router.callback_query(F.data.startswith("adm:uc:toggle:"))
+async def cb_user_card_toggle(query: CallbackQuery, rt: Runtime, bot: Bot):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    uuid = query.data.rsplit(":", 1)[1]
+    try:
+        rw_user = await rt.remna.get_user(uuid)
+    except RemnaError as e:
+        await query.answer(f"Ошибка: {e}", show_alert=True)
+        return
+    disable = str(rw_user.get("status", "")).upper() != "DISABLED"
+    try:
+        if disable:
+            await rt.remna.disable_user(uuid)
+        else:
+            await rt.remna.enable_user(uuid)
+    except RemnaError as e:
+        await query.answer(f"Ошибка: {e}", show_alert=True)
+        return
+    await query.answer("Готово")
+    text, kb = await _render_user_card(rt, rw_user, str(rw_user.get("telegramId") or uuid))
+    try:
+        await query.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "adm:uc:extend")
+async def cb_user_card_extend(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(UserCardFSM.extend_days)
+    await query.message.answer(texts.ADMIN_USER_EXTEND_ASK)
+    await query.answer()
+
+
+@router.message(UserCardFSM.extend_days)
+async def user_card_extend_days(message: Message, state: FSMContext, rt: Runtime, bot: Bot):
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer(texts.ADMIN_ASK_NUMBER)
+        return
+    days = int(raw)
+    data = await state.get_data()
+    await state.clear()
+    target = data.get("uc_target")
+    if not target:
+        await message.answer("Пользователь не выбран. Начните заново: /admin")
+        return
+    rw_user = await _resolve_target(rt, target)
+    tariff = Tariff(id="gift", title=f"Продление админом ({days} дн.)", days=days, description="")
+    try:
+        result_text, url = await deliver_subscription(
+            rt, int(target) if target.isdigit() else None, tariff, existing=rw_user
+        )
+    except RemnaError as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        return
+    await rt.db.add_payment(
+        int(target) if target.isdigit() else 0, "gift", "admin", "0", "-",
+        status="delivered", note=f"card extend {days}d target={target}",
+    )
+    await message.answer(texts.ADMIN_GRANT_DONE.format(details=result_text),
+                         disable_web_page_preview=True)
+    notify_tg = int(target) if target.isdigit() else None
+    if notify_tg is None and rw_user and rw_user.get("telegramId"):
+        try:
+            notify_tg = int(rw_user["telegramId"])
+        except (TypeError, ValueError):
+            notify_tg = None
+    if notify_tg:
+        try:
+            await bot.send_message(
+                notify_tg, "🎁 Администратор продлил вам подписку!\n\n" + result_text,
+                reply_markup=subscription_kb(url), disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════ CSV-ЭКСПОРТ ══════════════════════════
+
+
+@router.callback_query(F.data == "adm:csv")
+async def cb_csv_menu(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await query.message.edit_text(texts.ADMIN_CSV_MENU, reply_markup=csv_menu())
+    await query.answer()
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list]) -> BufferedInputFile:
+    import csv as csvlib
+    import io
+
+    buf = io.StringIO()
+    writer = csvlib.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    return BufferedInputFile(buf.getvalue().encode("utf-8-sig"), filename=filename)
+
+
+@router.callback_query(F.data == "adm:csv:payments")
+async def cb_csv_payments(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await query.answer("Готовлю файл…")
+    rows = [
+        [p["id"], p["created_at"], p["tg_id"], p["tariff_id"], p["provider"],
+         p["amount"], p["currency"], p["status"], p["source"] or ""]
+        for p in await rt.db.all_payments()
+    ]
+    file = _csv_response(
+        f"payments_{datetime.now():%Y%m%d}.csv",
+        ["id", "created_at", "tg_id", "tariff", "provider", "amount", "currency",
+         "status", "source"],
+        rows,
+    )
+    await query.message.answer_document(file, caption=f"🧾 Платежи: {len(rows)}")
+
+
+@router.callback_query(F.data == "adm:csv:users")
+async def cb_csv_users(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await query.answer("Готовлю файл…")
+    rows = [
+        [u["tg_id"], u["username"] or "", u["created_at"], u["source"] or "",
+         u["referred_by"] or "", "yes" if u["trial_used"] else "no"]
+        for u in await rt.db.all_bot_users_full()
+    ]
+    file = _csv_response(
+        f"users_{datetime.now():%Y%m%d}.csv",
+        ["tg_id", "username", "created_at", "source", "referred_by", "trial_used"],
+        rows,
+    )
+    await query.message.answer_document(file, caption=f"👥 Пользователи: {len(rows)}")

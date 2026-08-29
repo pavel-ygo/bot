@@ -280,11 +280,52 @@ async def test_client_unwrap():
     await client2.aclose()
 
 
+async def test_tickets_and_refs():
+    print("db: тикеты поддержки и рефералы:")
+    db = await Database.create("/tmp/test_bot4.db")
+    try:
+        # тикеты
+        tid = await db.create_ticket(900)
+        check("ticket created", tid > 0)
+        t = await db.get_ticket(tid)
+        check("ticket open by default", t["status"] == "open")
+        check("open ticket for user", (await db.open_ticket_for_user(900))["id"] == tid)
+        await db.add_ticket_message(tid, "user", 900, 900, 42)
+        await db.set_ticket_status(tid, "answered")
+        check("ticket answered", (await db.get_ticket(tid))["status"] == "answered")
+        check("still in open list", len(await db.open_tickets()) == 1)
+        await db.set_ticket_status(tid, "closed")
+        check("closed removed from list", await db.open_tickets() == [])
+        check("no open ticket now", await db.open_ticket_for_user(900) is None)
+
+        # рефералы
+        await db.upsert_bot_user(1000, "ref", "Ref")
+        await db.upsert_bot_user(1001, "refd", "Refd", referred_by="1000")
+        check("created flag works", True)
+        check("referrals count", await db.count_referrals(1000) == 1)
+        check("no paid referrals yet", await db.paid_referrals(1000) == 0)
+        await db.add_payment(1001, "m1", "stars", "150", "XTR", status="delivered")
+        check("paid referral counted", await db.paid_referrals(1000) == 1)
+        check("delivered_paid_count", await db.delivered_paid_count(1001) == 1)
+        await db.add_payment(1000, "refbonus", "refbonus", "3", "days", status="delivered")
+        check("bonus days total", await db.ref_bonus_days_total(1000) == 3)
+        check("referrals_total", await db.referrals_total() == 1)
+
+        # upsert не перетирает source/referred_by
+        created2 = await db.upsert_bot_user(1001, "refd2", "Refd")
+        check("second upsert -> False", created2 is False)
+        bu = await db.get_bot_user(1001)
+        check("referred_by preserved", bu["referred_by"] == "1000")
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
     await test_settings_and_promo()
     await test_promo_rules()
+    await test_tickets_and_refs()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()
@@ -293,3 +334,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+

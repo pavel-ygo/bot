@@ -8,7 +8,7 @@ def _kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu(*, support_url: str | None = None, show_trial: bool = False) -> InlineKeyboardMarkup:
+def main_menu(*, show_trial: bool = False) -> InlineKeyboardMarkup:
     bonus_row: list[InlineKeyboardButton] = [
         InlineKeyboardButton(text="🎫 Промокод", callback_data="promo")
     ]
@@ -18,10 +18,11 @@ def main_menu(*, support_url: str | None = None, show_trial: bool = False) -> In
         [InlineKeyboardButton(text="🔑 Купить подписку", callback_data="buy")],
         [InlineKeyboardButton(text="💳 Моя подписка", callback_data="menu:sub")],
         bonus_row,
+        [InlineKeyboardButton(text="👥 Друзья", callback_data="ref"),
+         InlineKeyboardButton(text="❓ FAQ", callback_data="menu:faq")],
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data="menu:help")],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
     ]
-    if support_url:
-        rows.append([InlineKeyboardButton(text="🆘 Поддержка", url=support_url)])
     return _kb(rows)
 
 
@@ -104,6 +105,11 @@ def admin_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎁 Пробный период", callback_data="adm:trial"),
             InlineKeyboardButton(text="💳 Способы оплаты", callback_data="adm:pay"),
         ],
+        [
+            InlineKeyboardButton(text="🎫 Обращения", callback_data="adm:tickets"),
+            InlineKeyboardButton(text="👤 Пользователь", callback_data="adm:user"),
+        ],
+        [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="adm:csv")],
     ])
 
 
@@ -194,4 +200,72 @@ def pay_toggles_menu(states: dict[str, bool], available: dict[str, bool]) -> Inl
             text=f"{icon} {labels[name]}", callback_data=f"adm:pay:{name}",
         )])
     rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+# ── FAQ ────────────────────────────────────────────────────────────────
+
+
+def faq_menu(items: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=q, callback_data=f"faq:{i}")]
+        for i, (q, _) in enumerate(items)
+    ]
+    rows.append([InlineKeyboardButton(text="🆘 Задать вопрос в поддержку", callback_data="support")])
+    rows += back_to_menu()
+    return _kb(rows)
+
+
+# ── поддержка (тикеты) ─────────────────────────────────────────────────
+
+
+def ticket_user_menu(ticket_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="✅ Вопрос решён — закрыть", callback_data=f"tk:close:{ticket_id}")],
+    ])
+
+
+def ticket_admin_menu(ticket_id: int, answered: bool) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="💬 Ответить", callback_data=f"adm:tk:reply:{ticket_id}")],
+        [InlineKeyboardButton(text="✅ Закрыть", callback_data=f"adm:tk:close:{ticket_id}")],
+    ])
+
+
+def tickets_list_menu(tickets: list[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=f"{'🟡' if t['status'] == 'answered' else '🔴'} #{t['id']} — от {t['tg_id']}",
+            callback_data=f"adm:tk:{t['id']}",
+        )]
+        for t in tickets
+    ]
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+# ── CSV ────────────────────────────────────────────────────────────────
+
+
+def csv_menu() -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="🧾 Платежи (все)", callback_data="adm:csv:payments")],
+        [InlineKeyboardButton(text="👥 Пользователи (все)", callback_data="adm:csv:users")],
+        *admin_back().inline_keyboard,
+    ])
+
+
+# ── карточка пользователя ──────────────────────────────────────────────
+
+
+def user_card_menu(tg_id: int | None, rw_uuid: str | None, disabled: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if tg_id:
+        rows.append([InlineKeyboardButton(text="➕ Продлить", callback_data="adm:uc:extend")])
+    if rw_uuid:
+        rows.append([InlineKeyboardButton(
+            text="✅ Включить" if disabled else "🚫 Отключить",
+            callback_data=f"adm:uc:toggle:{rw_uuid}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ В админку", callback_data="adm:main")])
     return _kb(rows)

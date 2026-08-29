@@ -172,3 +172,34 @@ async def cb_trial_check(query: CallbackQuery, rt: Runtime, bot: Bot):
         await query.answer(texts.TRIAL_DISABLED, show_alert=True)
         return
     await _trial_check(rt, bot, query, tcfg)
+
+
+# ══════════════════════════ партнёрская программа ══════════════════════════
+
+
+@router.callback_query(F.data == "ref")
+async def cb_referral(query: CallbackQuery, rt: Runtime):
+    tg_id = query.from_user.id
+    bonus = rt.cfg.ref_bonus_days
+    link = f"https://t.me/{rt.bot_username}?start=u{tg_id}"
+    invited = await rt.db.count_referrals(tg_id)
+    paid = await rt.db.paid_referrals(tg_id)
+    earned = await rt.db.ref_bonus_days_total(tg_id)
+    share_url = (
+        f"https://t.me/share/url?url={link}&text="
+        "Попробуй VPN по моей ссылке — недорого и работает!"
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Поделиться ссылкой", url=share_url)],
+        *back_to_menu(),
+    ])
+    await query.message.edit_text(
+        texts.REF_INFO.format(
+            bonus=bonus, link=link, invited=invited, paid=paid, earned=earned,
+        ),
+        reply_markup=kb,
+        disable_web_page_preview=True,
+    )
+    await query.answer()

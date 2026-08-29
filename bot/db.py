@@ -67,6 +67,26 @@ CREATE TABLE IF NOT EXISTS promo_activations (
     created_at TEXT NOT NULL,
     UNIQUE (promo_id, tg_id)
 );
+
+CREATE TABLE IF NOT EXISTS tickets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id      INTEGER NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'open',  -- open | answered | closed
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    closed_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets (status);
+
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id  INTEGER NOT NULL,
+    role       TEXT NOT NULL,                 -- user | admin
+    tg_id      INTEGER NOT NULL,
+    chat_id    INTEGER,
+    message_id INTEGER,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -107,31 +127,64 @@ class Database:
             )
         if not await has_col("payments", "source"):
             await self._db.execute("ALTER TABLE payments ADD COLUMN source TEXT")
+        if not await has_col("bot_users", "referred_by"):
+            await self._db.execute("ALTER TABLE bot_users ADD COLUMN referred_by TEXT")
 
     # ── пользователи бота ──────────────────────────────────────────────
 
     async def upsert_bot_user(
         self, tg_id: int, username: str | None, first_name: str | None,
-        source: str | None = None,
-    ) -> None:
-        """Создаёт/обновляет пользователя. source фиксируется только при первом входе."""
+        source: str | None = None, referred_by: str | None = None,
+    ) -> bool:
+        """Создаёт/обновляет пользователя. source/referred_by фиксируются только при первом входе.
+
+        Возвращает True, если пользователь создан (первый запуск).
+        """
         now = utcnow().isoformat()
+        async with self._db.execute(
+            "SELECT 1 FROM bot_users WHERE tg_id = ?", (tg_id,)
+        ) as cur:
+            exists = await cur.fetchone()
+        if exists:
+            await self._db.execute(
+                "UPDATE bot_users SET username = ?, first_name = ?, last_seen = ? WHERE tg_id = ?",
+                (username, first_name, now, tg_id),
+            )
+            await self._db.commit()
+            return False
         await self._db.execute(
             """
-            INSERT INTO bot_users (tg_id, username, first_name, created_at, last_seen, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tg_id) DO UPDATE SET
-                username = excluded.username,
-                first_name = excluded.first_name,
-                last_seen = excluded.last_seen
+            INSERT INTO bot_users (tg_id, username, first_name, created_at, last_seen,
+                                   source, referred_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (tg_id, username, first_name, now, now, source),
+            (tg_id, username, first_name, now, now, source, referred_by),
         )
         await self._db.commit()
+        return True
+
+    async def get_bot_user(self, tg_id: int) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM bot_users WHERE tg_id = ?", (tg_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
 
     async def all_bot_users(self) -> list[int]:
         async with self._db.execute("SELECT tg_id FROM bot_users") as cur:
             return [row[0] for row in await cur.fetchall()]
+
+    async def all_bot_users_full(self) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM bot_users ORDER BY tg_id"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def all_payments(self, limit: int = 10000) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM payments ORDER BY id LIMIT ?", (limit,)
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
     async def get_reminder(self, tg_id: int) -> str | None:
         async with self._db.execute(
@@ -373,6 +426,112 @@ class Database:
         )
         await self._db.commit()
         return cur.rowcount or 0
+
+    # ── платежи пользователя, рефералы ─────────────────────────────────
+
+    async def payments_for_user(self, tg_id: int, limit: int = 5) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM payments WHERE tg_id = ? ORDER BY id DESC LIMIT ?",
+            (tg_id, limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def delivered_paid_count(self, tg_id: int) -> int:
+        """Сколько РЕАЛЬНЫХ оплат (не подарки/промо/триал) уже у пользователя."""
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM payments WHERE tg_id = ? AND status IN ('paid','delivered') "
+            "AND provider IN ('stars','cryptobot','yookassa')",
+            (tg_id,),
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+    async def count_referrals(self, referrer_tg_id: int) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE referred_by = ?", (str(referrer_tg_id),)
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+    async def paid_referrals(self, referrer_tg_id: int) -> int:
+        async with self._db.execute(
+            """
+            SELECT COUNT(DISTINCT p.tg_id) FROM payments p
+            JOIN bot_users b ON b.tg_id = p.tg_id
+            WHERE b.referred_by = ? AND p.status IN ('paid','delivered')
+              AND p.provider IN ('stars','cryptobot','yookassa')
+            """,
+            (str(referrer_tg_id),),
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+    async def ref_bonus_days_total(self, referrer_tg_id: int) -> float:
+        async with self._db.execute(
+            "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM payments "
+            "WHERE tg_id = ? AND provider = 'refbonus' AND status = 'delivered'",
+            (referrer_tg_id,),
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+    async def referrals_total(self) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE referred_by IS NOT NULL"
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+    # ── тикеты поддержки ───────────────────────────────────────────────
+
+    async def create_ticket(self, tg_id: int) -> int:
+        cur = await self._db.execute(
+            "INSERT INTO tickets (tg_id, status, created_at) VALUES (?, 'open', ?)",
+            (tg_id, utcnow().isoformat()),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def get_ticket(self, ticket_id: int) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def open_ticket_for_user(self, tg_id: int) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM tickets WHERE tg_id = ? AND status != 'closed' "
+            "ORDER BY id DESC LIMIT 1",
+            (tg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def open_tickets(self, limit: int = 20) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM tickets WHERE status != 'closed' ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def add_ticket_message(
+        self, ticket_id: int, role: str, tg_id: int,
+        chat_id: int | None = None, message_id: int | None = None,
+    ) -> None:
+        await self._db.execute(
+            "INSERT INTO ticket_messages (ticket_id, role, tg_id, chat_id, message_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ticket_id, role, tg_id, chat_id, message_id, utcnow().isoformat()),
+        )
+        await self._db.execute(
+            "UPDATE tickets SET updated_at = ? WHERE id = ?",
+            (utcnow().isoformat(), ticket_id),
+        )
+        await self._db.commit()
+
+    async def set_ticket_status(self, ticket_id: int, status: str) -> None:
+        closed = utcnow().isoformat() if status == "closed" else None
+        await self._db.execute(
+            "UPDATE tickets SET status = ?, closed_at = COALESCE(?, closed_at) WHERE id = ?",
+            (status, closed, ticket_id),
+        )
+        await self._db.commit()
 
     # ── статистика ─────────────────────────────────────────────────────
 

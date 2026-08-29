@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 import re
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from .. import texts
-from ..keyboards import main_menu, no_sub_menu, sub_menu
+from ..keyboards import faq_menu, main_menu, no_sub_menu, sub_menu
 from ..qr import qr_file
 from ..remnawave import RemnaError
 from ..services import Runtime, subscription_card, subscription_kb, trial_config
@@ -18,32 +18,55 @@ from ..services import Runtime, subscription_card, subscription_kb, trial_config
 router = Router(name="user")
 log = logging.getLogger(__name__)
 
-REF_RE = re.compile(r"ref_([a-z0-9_-]{2,32})")
+REF_RE = re.compile(r"ref_([a-z0-9_-]{2,32})")   # рекламная кампания
+USER_REF_RE = re.compile(r"u(\d{3,})")           # персональная реферальная ссылка
 
 
-async def _ensure_user(rt: Runtime, message_or_cb, source: str | None = None) -> None:
+async def _ensure_user(rt: Runtime, message_or_cb) -> None:
     from_user = message_or_cb.from_user
     if from_user:
-        await rt.db.upsert_bot_user(from_user.id, from_user.username, from_user.first_name,
-                                    source=source)
+        await rt.db.upsert_bot_user(
+            from_user.id, from_user.username, from_user.first_name
+        )
 
 
 async def _menu(rt: Runtime, show_trial: bool | None = None):
     if show_trial is None:
         tcfg = await trial_config(rt)
         show_trial = bool(tcfg["enabled"] and tcfg["channel"])
-    return main_menu(support_url=rt.cfg.support_url, show_trial=show_trial)
+    return main_menu(show_trial=show_trial)
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, rt: Runtime):
+async def cmd_start(message: Message, rt: Runtime, bot: Bot):
     source = None
+    referred_by = None
     args = (message.text or "").split(maxsplit=1)
     if len(args) > 1:
-        m = REF_RE.match(args[1].strip())
+        payload = args[1].strip()
+        m = REF_RE.match(payload)
         if m:
             source = m.group(1)
-    await _ensure_user(rt, message, source=source)
+        else:
+            m = USER_REF_RE.match(payload)
+            if m:
+                referred_by = m.group(1)
+    created = await rt.db.upsert_bot_user(
+        message.from_user.id, message.from_user.username,
+        message.from_user.first_name, source=source, referred_by=referred_by,
+    )
+    if created and rt.cfg.admin_ids:
+        for admin_id in rt.cfg.admin_ids:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    texts.NOTIF_NEW_USER.format(
+                        name=message.from_user.first_name or "—", uid=message.from_user.id,
+                        source=source or ("реферал " + referred_by if referred_by else "—"),
+                    ),
+                )
+            except Exception:
+                pass
     await message.answer(
         texts.START.format(name=message.from_user.first_name or "друг"),
         reply_markup=await _menu(rt),
@@ -80,7 +103,7 @@ async def cb_main(query: CallbackQuery, state: FSMContext, rt: Runtime):
 @router.callback_query(F.data == "menu:help")
 async def cb_help(query: CallbackQuery, rt: Runtime):
     await query.message.edit_text(
-        texts.HELP, reply_markup=main_menu(support_url=None), disable_web_page_preview=True
+        texts.HELP, reply_markup=main_menu(), disable_web_page_preview=True
     )
     await query.answer()
 
@@ -138,3 +161,28 @@ async def cb_qr(query: CallbackQuery, rt: Runtime):
         caption=texts.QR_CAPTION,
         reply_markup=subscription_kb(url),
     )
+
+
+@router.callback_query(F.data == "menu:faq")
+async def cb_faq(query: CallbackQuery, rt: Runtime):
+    await query.message.edit_text(
+        texts.FAQ_INTRO, reply_markup=faq_menu(texts.FAQ_ITEMS)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("faq:"))
+async def cb_faq_item(query: CallbackQuery, rt: Runtime):
+    idx = query.data.split(":", 1)[1]
+    if not idx.isdigit() or int(idx) >= len(texts.FAQ_ITEMS):
+        await query.answer()
+        return
+    q, a = texts.FAQ_ITEMS[int(idx)]
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ К вопросам", callback_data="menu:faq")],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+    ])
+    await query.message.edit_text(f"❓ <b>{q}</b>\n\n{a}", reply_markup=kb)
+    await query.answer()

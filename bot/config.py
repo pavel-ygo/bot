@@ -65,11 +65,11 @@ class Config:
     yookassa_secret: str | None
     db_path: str
     tz: ZoneInfo
-    support_url: str | None
     tariffs: dict[str, Tariff]
     trial_days: int = 1
     trial_channel: str | None = None       # @username или числовой ID канала
     trial_channel_url: str | None = None   # ссылка-приглашение для кнопки
+    ref_bonus_days: int = 3                # дней рефереру за первую оплату приведённого
 
     # ── провайдеры оплаты, доступные с текущими настройками ──
     @property
@@ -174,6 +174,11 @@ def load_config() -> Config:
     except ValueError as e:
         raise ConfigError(f"TRIAL_DAYS «{trial_days_raw}» — должно быть число от 1 до 365") from e
 
+    try:
+        ref_bonus_days = int(_get("REF_BONUS_DAYS", "3"))
+    except ValueError as e:
+        raise ConfigError("REF_BONUS_DAYS — должно быть числом") from e
+
     trial_channel = _get("TRIAL_CHANNEL") or None
     trial_channel_url = _get("TRIAL_CHANNEL_URL") or None
     if trial_channel_url and not trial_channel_url.startswith(("https://t.me/", "http://t.me/")):
@@ -194,9 +199,9 @@ def load_config() -> Config:
         yookassa_secret=_get("YOOKASSA_SECRET") or None,
         db_path=_get("DB_PATH", "data/bot.db"),
         tz=tz,
-        support_url=_get("SUPPORT_URL") or None,
         tariffs=_parse_tariffs(_get("TARIFFS") or json.dumps(DEFAULT_TARIFFS)),
         trial_days=trial_days,
         trial_channel=trial_channel,
         trial_channel_url=trial_channel_url,
+        ref_bonus_days=max(0, ref_bonus_days),
     )
