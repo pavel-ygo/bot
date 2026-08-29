@@ -74,6 +74,7 @@ def sub_menu(url: str, *, buy_callback: str | None = None) -> InlineKeyboardMark
     ]
     if buy_callback:
         rows.append([InlineKeyboardButton(text="🔑 Продлить / купить", callback_data=buy_callback)])
+    rows.append([InlineKeyboardButton(text="🧾 Мои покупки", callback_data="my:payments")])
     rows += back_to_menu()
     return _kb(rows)
 
@@ -81,6 +82,7 @@ def sub_menu(url: str, *, buy_callback: str | None = None) -> InlineKeyboardMark
 def no_sub_menu() -> InlineKeyboardMarkup:
     return _kb([
         [InlineKeyboardButton(text="🔑 Купить подписку", callback_data="buy")],
+        [InlineKeyboardButton(text="🧾 Мои покупки", callback_data="my:payments")],
         *back_to_menu(),
     ])
 
@@ -112,6 +114,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="adm:csv")],
         [InlineKeyboardButton(text="🏦 Оплата на карту", callback_data="adm:card")],
+        [InlineKeyboardButton(text="🔔 Отчёты и алерты", callback_data="adm:alerts")],
     ])
 
 
@@ -250,8 +253,10 @@ def tickets_list_menu(tickets: list[dict]) -> InlineKeyboardMarkup:
 
 def csv_menu() -> InlineKeyboardMarkup:
     return _kb([
-        [InlineKeyboardButton(text="🧾 Платежи (все)", callback_data="adm:csv:payments")],
-        [InlineKeyboardButton(text="👥 Пользователи (все)", callback_data="adm:csv:users")],
+        [InlineKeyboardButton(text="📊 Полный отчёт (Excel, с графиками)",
+                              callback_data="adm:csv:xlsx")],
+        [InlineKeyboardButton(text="🧾 Платежи (CSV)", callback_data="adm:csv:payments")],
+        [InlineKeyboardButton(text="👥 Пользователи (CSV)", callback_data="adm:csv:users")],
         *admin_back().inline_keyboard,
     ])
 
@@ -355,4 +360,34 @@ def broadcast_audience_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="❌ Ни одной оплаты", callback_data="adm:bc:aud:never_paid")],
         [InlineKeyboardButton(text="💳 Платили хотя бы раз", callback_data="adm:bc:aud:paid")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="adm:cancel")],
+    ])
+
+
+# ── история платежей пользователя ──────────────────────────────────────
+
+
+def my_payments_back_menu() -> InlineKeyboardMarkup:
+    return _kb([[InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:main")]])
+
+
+# ── настройки отчётов и алертов ────────────────────────────────────────
+
+
+def alerts_menu(*, reports_enabled: bool, node_alerts_enabled: bool,
+                backup_enabled: bool, interval_h: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(
+            text=f"📊 Отчёты каждые {interval_h} ч: "
+                 f"{'✅ вкл' if reports_enabled else '❌ выкл'}",
+            callback_data="adm:al:reports",
+        )],
+        [InlineKeyboardButton(
+            text=f"🔴 Алерты о нодах: {'✅ вкл' if node_alerts_enabled else '❌ выкл'}",
+            callback_data="adm:al:nodes",
+        )],
+        [InlineKeyboardButton(
+            text=f"💾 Бэкап в Telegram: {'✅ вкл' if backup_enabled else '❌ выкл'}",
+            callback_data="adm:al:backup",
+        )],
+        *admin_back().inline_keyboard,
     ])

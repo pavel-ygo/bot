@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets (status);
 
+CREATE TABLE IF NOT EXISTS node_alerts (
+    node_uuid  TEXT PRIMARY KEY,
+    node_name  TEXT NOT NULL,
+    state      TEXT NOT NULL DEFAULT 'ok',   -- ok | down
+    since      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ticket_messages (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id  INTEGER NOT NULL,
@@ -647,3 +654,76 @@ class Database:
             "month": month,
             "bot_users": bot_users,
         }
+
+    # ── алерты о нодах ─────────────────────────────────────────────────
+
+    async def get_node_state(self, node_uuid: str) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM node_alerts WHERE node_uuid = ?", (node_uuid,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def set_node_state(self, node_uuid: str, node_name: str, state: str) -> None:
+        await self._db.execute(
+            "INSERT INTO node_alerts (node_uuid, node_name, state, since) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (node_uuid) DO UPDATE SET state = excluded.state, "
+            "since = excluded.since, node_name = excluded.node_name",
+            (node_uuid, node_name, state, utcnow().isoformat()),
+        )
+        await self._db.commit()
+
+    # ── отчёт за период ────────────────────────────────────────────────
+
+    async def sales_count_between(self, start_iso: str, end_iso: str) -> int:
+        async with self._db.execute(
+            """
+            SELECT COUNT(*) FROM payments
+            WHERE status IN ('paid','delivered')
+              AND provider IN ('stars','cryptobot','yookassa','card')
+              AND ? <= created_at AND created_at < ?
+            """,
+            (start_iso, end_iso),
+        ) as cur:
+            return (await cur.fetchone())[0] or 0
+
+    async def revenue_rub_between(self, start_iso: str, end_iso: str) -> float:
+        async with self._db.execute(
+            """
+            SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM payments
+            WHERE status IN ('paid','delivered') AND currency = 'RUB'
+              AND provider IN ('stars','cryptobot','yookassa','card')
+              AND ? <= created_at AND created_at < ?
+            """,
+            (start_iso, end_iso),
+        ) as cur:
+            return (await cur.fetchone())[0] or 0.0
+
+    async def period_report(self, hours: int) -> dict:
+        """Продажи/юзеры за последние N часов (для регулярных отчётов)."""
+        async with self._db.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(CASE WHEN currency='RUB' THEN CAST(amount AS REAL) END), 0)
+            FROM payments
+            WHERE status IN ('paid','delivered') AND provider IN ('stars','cryptobot','yookassa','card')
+              AND created_at >= datetime('now', ?)
+            """,
+            (f"-{hours} hours",),
+        ) as cur:
+            row = await cur.fetchone()
+            sales, rub = (row[0] or 0), (row[1] or 0)
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE created_at >= datetime('now', ?)",
+            (f"-{hours} hours",),
+        ) as cur:
+            new_users = (await cur.fetchone())[0] or 0
+        async with self._db.execute(
+            """
+            SELECT COUNT(*) FROM payments
+            WHERE status IN ('paid','delivered') AND provider = 'refbonus'
+              AND created_at >= datetime('now', ?)
+            """,
+            (f"-{hours} hours",),
+        ) as cur:
+            ref_bonuses = (await cur.fetchone())[0] or 0
+        return {"sales": sales, "rub": rub, "new_users": new_users, "ref_bonuses": ref_bonuses}

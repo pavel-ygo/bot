@@ -191,3 +191,42 @@ async def cb_faq_item(query: CallbackQuery, rt: Runtime):
     ])
     await query.message.edit_text(f"❓ <b>{q}</b>\n\n{a}", reply_markup=kb)
     await query.answer()
+
+
+@router.callback_query(F.data == "my:payments")
+async def cb_my_payments(query: CallbackQuery, rt: Runtime):
+    from ..keyboards import my_payments_back_menu
+    from ..utils import fmt_date, parse_iso
+
+    payments = await rt.db.payments_for_user(query.from_user.id, limit=10)
+    if not payments:
+        await query.message.edit_text(
+            texts.MY_PAYMENTS_EMPTY, reply_markup=my_payments_back_menu()
+        )
+        await query.answer()
+        return
+    icons = {"delivered": "✅", "paid": "✅", "pending": "⏳",
+             "canceled": "❌", "error": "⚠️"}
+    status_ru = {"delivered": "выдана", "paid": "оплачена", "pending": "ожидает",
+                 "canceled": "отменена", "error": "ошибка"}
+    cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": "USDT", "-": "", "days": "дн."}
+    lines = ""
+    real_payments = [p for p in payments if p["provider"] != "refbonus"]
+    for p in real_payments:
+        created = parse_iso(p["created_at"])
+        tariff = rt.cfg.tariffs.get(p["tariff_id"])
+        title = tariff.title if tariff else p["tariff_id"]
+        amount = f"{p['amount']}{cur_sym.get(p['currency'], '')}".strip() or "—"
+        lines += texts.MY_PAYMENTS_LINE.format(
+            icon=icons.get(p["status"], "•"), id=p["id"],
+            date=fmt_date(created, rt.cfg.tz), amount=amount,
+            tariff=title, status=status_ru.get(p["status"], p["status"]),
+        )
+    total_all = await rt.db.payments_for_user(query.from_user.id, limit=1000)
+    extra = len([p for p in total_all if p["provider"] != "refbonus"]) - len(real_payments)
+    if extra > 0:
+        lines += texts.MY_PAYMENTS_MORE.format(extra=extra)
+    await query.message.edit_text(
+        texts.MY_PAYMENTS_TITLE.format(list=lines), reply_markup=my_payments_back_menu()
+    )
+    await query.answer()

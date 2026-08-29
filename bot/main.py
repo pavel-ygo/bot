@@ -13,7 +13,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from .config import ConfigError, load_config
 from .db import Database
 from .handlers import admin, admin_extra, bonus, buy, pay_card, support, user
-from .jobs import db_backup_loop, payment_poller, reminders_loop
+from .jobs import (db_backup_loop, node_monitor, payment_poller,
+                   periodic_report, reminders_loop)
 from .payments import CryptoBotProvider, YooKassaProvider
 from .remnawave import RemnawaveClient
 from .services import Runtime
@@ -72,7 +73,9 @@ async def main() -> None:
     tasks = [
         asyncio.create_task(payment_poller(rt, bot), name="payment-poller"),
         asyncio.create_task(reminders_loop(rt, bot), name="reminders"),
-        asyncio.create_task(db_backup_loop(rt), name="db-backup"),
+        asyncio.create_task(db_backup_loop(rt, bot), name="db-backup"),
+        asyncio.create_task(node_monitor(rt, bot), name="node-monitor"),
+        asyncio.create_task(periodic_report(rt, bot), name="periodic-report"),
     ]
     try:
         await dp.start_polling(bot)

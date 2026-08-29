@@ -365,6 +365,8 @@ async def test_card_provider():
 
 async def test_segments_and_nudge():
     print("db: сегменты рассылки и напоминания:")
+    from datetime import timedelta
+
     db = await Database.create("/tmp/test_bot7.db")
     try:
         # сегменты оплат
@@ -376,9 +378,22 @@ async def test_segments_and_nudge():
         check("never_paid segment", 2000 in never and 2001 not in never)
         check("paid segment", 2001 in paid and 2000 not in paid)
 
-        # напоминания о брошенных оплатах
-        from datetime import timedelta
+        # отчёт за период
+        rep = await db.period_report(4)
+        check("period report keys",
+              set(rep) == {"sales", "rub", "new_users", "ref_bonuses"})
+        check("period report has sale", rep["sales"] >= 1)
 
+        # дневная выручка
+        from bot.utils import utcnow as _u
+        today = _u().replace(hour=0, minute=0, second=0, microsecond=0)
+        cnt = await db.sales_count_between(today.isoformat(),
+                                           (today + timedelta(days=1)).isoformat())
+        rub = await db.revenue_rub_between(today.isoformat(),
+                                           (today + timedelta(days=1)).isoformat())
+        check("sales between", cnt >= 1 and rub >= 199)
+
+        # напоминания о брошенных оплатах
         from bot.utils import utcnow
 
         pid = await db.add_payment(2000, "m1", "card", "199", "RUB")

@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from openpyxl.utils import get_column_letter
+
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -13,6 +15,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from .. import texts
 from ..config import Tariff
 from ..keyboards import (
+    alerts_menu,
     csv_menu,
     user_card_menu,
     admin_menu,
@@ -704,3 +707,251 @@ async def cb_csv_users(query: CallbackQuery, rt: Runtime):
         rows,
     )
     await query.message.answer_document(file, caption=f"👥 Пользователи: {len(rows)}")
+
+
+# ══════════════════════════ ОТЧЁТЫ И АЛЕРТЫ ══════════════════════════
+
+
+async def _alerts_text_and_kb(rt: Runtime):
+    reports = await rt.db.get_setting("reports_enabled", "1") == "1"
+    nodes = await rt.db.get_setting("alerts_nodes", "1") == "1"
+    backup = await rt.db.get_setting("alerts_backup", "1") == "1"
+    text = (
+        "🔔 <b>Отчёты и алерты</b>\n\n"
+        "📊 Отчёт админу каждые 4 часа: продажи, новые юзеры, статус нод\n"
+        "🔴 Мгновенные алерты, когда нода уходит в оффлайн и возвращается\n"
+        "💾 Ежедневный бэкап БД файлом в этот чат\n\n"
+        "Нажмите на пункт, чтобы включить/выключить:"
+    )
+    return text, alerts_menu(
+        reports_enabled=reports, node_alerts_enabled=nodes,
+        backup_enabled=backup, interval_h=4,
+    )
+
+
+@router.callback_query(F.data == "adm:alerts")
+async def cb_alerts(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    text, kb = await _alerts_text_and_kb(rt)
+    await query.message.edit_text(text, reply_markup=kb)
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("adm:al:"))
+async def cb_alerts_toggle(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    key = query.data.rsplit(":", 1)[1]
+    setting = {"reports": "reports_enabled", "nodes": "alerts_nodes",
+               "backup": "alerts_backup"}.get(key)
+    if not setting:
+        await query.answer()
+        return
+    current = await rt.db.get_setting(setting, "1") == "1"
+    await rt.db.set_setting(setting, "0" if current else "1")
+    text, kb = await _alerts_text_and_kb(rt)
+    await query.message.edit_text(text, reply_markup=kb)
+    await query.answer("Сохранено")
+
+
+# ══════════════════════════ EXCEL-ЭКСПОРТ ══════════════════════════
+
+
+async def _xlsx_data(rt: Runtime) -> dict:
+    """Собирает все данные для книги Excel (асинхронная часть)."""
+    return {
+        "stats": await rt.db.sales_stats(),
+        "payments": await rt.db.all_payments(),
+        "users": await rt.db.all_bot_users_full(),
+        "campaigns": await rt.db.campaign_stats(),
+        "trials": await rt.db.trials_count(),
+    }
+
+
+def _build_xlsx(rt: Runtime, data: dict) -> BufferedInputFile:
+    """Книга из 4 листов: Сводка с графиком, Платежи, Пользователи, Реклама."""
+    import io
+    from datetime import datetime
+
+    from openpyxl import Workbook
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.styles import Font, PatternFill
+
+    cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": " USDT"}
+    status_ru = {"delivered": "выдана", "paid": "оплачена", "pending": "ожидает",
+                 "canceled": "отменена", "error": "ошибка"}
+    provider_ru = {"card": "Перевод на карту", "lava": "Lava", "stars": "Telegram Stars",
+                   "cryptobot": "CryptoBot", "yookassa": "ЮKassa",
+                   "promo": "Промокод", "trial": "Пробный период",
+                   "admin": "Админ", "refbonus": "Реф. бонус"}
+
+    bold = Font(bold=True)
+    h2 = Font(bold=True, size=13)
+    fill = PatternFill("solid", fgColor="D9E1F2")
+
+    wb = Workbook()
+
+    # ── Лист 1: Сводка ──
+    ws = wb.active
+    ws.title = "Сводка"
+    ws["A1"] = "Сводка магазина"
+    ws["A1"].font = h2
+    st = data["stats"]
+    rows = [
+        ("Пользователей бота", st["bot_users"]),
+        ("Оплат всего", sum(r["cnt"] for r in st["by_provider"])),
+        ("Оплат за 7 дней", st["week"]),
+        ("Оплат за 30 дней", st["month"]),
+        ("Выдано вручную", st["gifts"]),
+        ("Пробных активаций", data.get("trials", 0)),
+    ]
+    for i, (label, value) in enumerate(rows, start=3):
+        ws.cell(row=i, column=1, value=label).font = bold
+        ws.cell(row=i, column=2, value=value)
+
+    # продажи по провайдерам (только рублёвые суммы считаем деньгами)
+    start = 10
+    ws.cell(row=start, column=1, value="Продажи по способам оплаты").font = bold
+    ws.cell(row=start + 1, column=1, value="Способ").fill = fill
+    ws.cell(row=start + 1, column=2, value="Оплат").fill = fill
+    ws.cell(row=start + 1, column=3, value="Сумма").fill = fill
+    r = start + 2
+    for row in st["by_provider"]:
+        name = provider_ru.get(row["provider"], row["provider"])
+        cur = row["currency"]
+        total = row["total"] or 0
+        ws.cell(row=r, column=1, value=f"{name} ({cur})")
+        ws.cell(row=r, column=2, value=row["cnt"])
+        ws.cell(row=r, column=3, value=total)
+        r += 1
+
+    chart = BarChart()
+    chart.title = "Оплаты по способам"
+    chart.y_axis.title = "Число оплат"
+    data_ref = Reference(ws, min_col=2, min_row=start + 1, max_row=r - 1)
+    cats = Reference(ws, min_col=1, min_row=start + 2, max_row=r - 1)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.height = 8
+    chart.width = 16
+    ws.add_chart(chart, f"E{start + 1}")
+
+    # выручка по дням (30 дней) — вторая таблица + график
+    daily = data.get("daily") or []
+    start2 = r + 2
+    ws.cell(row=start2, column=1, value="Выручка по дням (30 дн.), ₽").font = bold
+    ws.cell(row=start2 + 1, column=1, value="День").fill = fill
+    ws.cell(row=start2 + 1, column=2, value="Оплат").fill = fill
+    ws.cell(row=start2 + 1, column=3, value="₽").fill = fill
+    for i, d in enumerate(daily, start=start2 + 2):
+        ws.cell(row=i, column=1, value=d["day"])
+        ws.cell(row=i, column=2, value=d["cnt"])
+        ws.cell(row=i, column=3, value=round(d["rub"], 2))
+    if daily:
+        chart2 = BarChart()
+        chart2.title = "Выручка по дням"
+        dr = Reference(ws, min_col=3, min_row=start2 + 1, max_row=start2 + 1 + len(daily))
+        dcats = Reference(ws, min_col=1, min_row=start2 + 2, max_row=start2 + 1 + len(daily))
+        chart2.add_data(dr, titles_from_data=True)
+        chart2.set_categories(dcats)
+        chart2.height = 8
+        chart2.width = 20
+        ws.add_chart(chart2, f"E{start2 + 1}")
+
+    # ── Лист 2: Платежи ──
+    ws2 = wb.create_sheet("Платежи")
+    headers = ["ID", "Дата", "TG ID", "Тариф", "Способ", "Сумма", "Статус", "Источник"]
+    for c, h in enumerate(headers, start=1):
+        cell = ws2.cell(row=1, column=c, value=h)
+        cell.font = bold
+        cell.fill = fill
+    for i, p_ in enumerate(data["payments"], start=2):
+        tariff = rt.cfg.tariffs.get(p_["tariff_id"])
+        created = parse_iso(p_["created_at"])
+        ws2.cell(row=i, column=1, value=p_["id"])
+        c2 = ws2.cell(row=i, column=2, value=fmt_date(created, rt.cfg.tz))
+        c2.number_format = "@"
+        ws2.cell(row=i, column=3, value=p_["tg_id"])
+        ws2.cell(row=i, column=4, value=tariff.title if tariff else p_["tariff_id"])
+        ws2.cell(row=i, column=5, value=provider_ru.get(p_["provider"], p_["provider"]))
+        ws2.cell(row=i, column=6, value=float(p_["amount"]) if p_["amount"] else 0)
+        ws2.cell(row=i, column=7, value=status_ru.get(p_["status"], p_["status"]))
+        ws2.cell(row=i, column=8, value=p_["source"] or "")
+    widths = [6, 18, 14, 24, 20, 10, 12, 16]
+    for i, w in enumerate(widths, start=1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+    ws2.freeze_panes = "A2"
+
+    # ── Лист 3: Пользователи ──
+    ws3 = wb.create_sheet("Пользователи")
+    headers3 = ["TG ID", "Имя", "Username", "Регистрация", "Источник", "Реферал", "Пробный"]
+    for c, h in enumerate(headers3, start=1):
+        cell = ws3.cell(row=1, column=c, value=h)
+        cell.font = bold
+        cell.fill = fill
+    for i, u in enumerate(data["users"], start=2):
+        created = parse_iso(u["created_at"])
+        ws3.cell(row=i, column=1, value=u["tg_id"])
+        ws3.cell(row=i, column=2, value=u["first_name"] or "")
+        ws3.cell(row=i, column=3, value=u["username"] or "")
+        ws3.cell(row=i, column=4, value=fmt_date(created, rt.cfg.tz))
+        ws3.cell(row=i, column=5, value=u["source"] or "")
+        ws3.cell(row=i, column=6, value=u["referred_by"] or "")
+        ws3.cell(row=i, column=7, value="да" if u["trial_used"] else "")
+    for i, w in enumerate([14, 18, 16, 18, 16, 14, 10], start=1):
+        ws3.column_dimensions[get_column_letter(i)].width = w
+    ws3.freeze_panes = "A2"
+
+    # ── Лист 4: Реклама ──
+    ws4 = wb.create_sheet("Реклама")
+    headers4 = ["Кампания", "Юзеров", "Оплат", "Выручка"]
+    for c, h in enumerate(headers4, start=1):
+        cell = ws4.cell(row=1, column=c, value=h)
+        cell.font = bold
+        cell.fill = fill
+    for i, (name, item) in enumerate(data["campaigns"].items(), start=2):
+        revenue = " / ".join(
+            f"{total:g}{cur_sym.get(cur, cur)}" for cur, total in item["revenue"].items()
+        ) or "—"
+        ws4.cell(row=i, column=1, value=name)
+        ws4.cell(row=i, column=2, value=item["users"])
+        ws4.cell(row=i, column=3, value=item["paid"])
+        ws4.cell(row=i, column=4, value=revenue)
+    for i, w in enumerate([20, 10, 10, 18], start=1):
+        ws4.column_dimensions[get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    name = f"report_{datetime.now():%Y%m%d_%H%M}.xlsx"
+    return BufferedInputFile(buf.getvalue(), filename=name)
+
+
+async def _trials(rt: Runtime) -> int:
+    return await rt.db.trials_count()
+
+
+async def _daily_revenue(rt: Runtime, days: int = 30) -> list[dict]:
+    rows = []
+    for d in range(days - 1, -1, -1):
+        day_start = (utcnow() - timedelta(days=d)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        rows.append({
+            "day": day_start.strftime("%d.%m"),
+            "cnt": await rt.db.sales_count_between(
+                day_start.isoformat(), day_end.isoformat()),
+            "rub": await rt.db.revenue_rub_between(
+                day_start.isoformat(), day_end.isoformat()),
+        })
+    return rows
+
+
+@router.callback_query(F.data == "adm:csv:xlsx")
+async def cb_xlsx(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await query.answer("Готовлю книгу Excel…")
+    data = await _xlsx_data(rt)
+    data["daily"] = await _daily_revenue(rt)
+    file = _build_xlsx(rt, data)
+    await query.message.answer_document(file, caption="📊 Полный отчёт магазина (Excel)")
