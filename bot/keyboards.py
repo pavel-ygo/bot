@@ -115,6 +115,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="adm:csv")],
         [InlineKeyboardButton(text="🏦 Оплата на карту", callback_data="adm:card")],
         [InlineKeyboardButton(text="🔔 Отчёты и алерты", callback_data="adm:alerts")],
+        [InlineKeyboardButton(text="📢 Системный канал", callback_data="adm:sysch")],
         [
             InlineKeyboardButton(text="💼 Тарифы", callback_data="adm:tariffs"),
             InlineKeyboardButton(text="👥 Операторы оплаты", callback_data="adm:operators"),
@@ -441,3 +442,14 @@ def tariff_detail_menu(tariff) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm:tar:del:{tariff.id}")],
         [InlineKeyboardButton(text="⬅️ К тарифам", callback_data="adm:tariffs")],
     ])
+
+
+def sys_channel_menu(*, has_channel: bool) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="✏️ Указать канал", callback_data="adm:sysch:set")]]
+    if has_channel:
+        rows.append([
+            InlineKeyboardButton(text="🧪 Тестовое сообщение", callback_data="adm:sysch:test"),
+            InlineKeyboardButton(text="🗑 Убрать канал", callback_data="adm:sysch:del"),
+        ])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)

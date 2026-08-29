@@ -16,7 +16,7 @@ from ..keyboards import (
     ticket_user_menu,
     tickets_list_menu,
 )
-from ..services import Runtime
+from ..services import Runtime, sys_log
 from ..utils import fmt_date, parse_iso
 
 router = Router(name="support")
@@ -93,6 +93,10 @@ async def support_first_message(message: Message, state: FSMContext, rt: Runtime
         texts.SUPPORT_TICKET_CREATED.format(tid=ticket_id),
         reply_markup=ticket_user_menu(ticket_id),
     )
+    await sys_log(rt, bot, texts.SYS_TICKET_NEW.format(
+        tid=ticket_id, uid=message.from_user.id,
+        name=message.from_user.first_name or message.from_user.username or str(message.from_user.id),
+    ))
 
 
 @router.callback_query(F.data.startswith("tk:close:"))

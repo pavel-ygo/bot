@@ -12,6 +12,7 @@ from . import texts
 from .config import Config, Tariff
 from .db import Database
 from .keyboards import main_menu
+from .texts import SYS_PAYMENT
 from .payments import CryptoBotProvider, YooKassaProvider
 from .remnawave import RemnaError, RemnawaveClient
 from .utils import fmt_bytes, fmt_date, human_days_left, parse_iso, random_suffix, to_iso, utcnow
@@ -354,21 +355,27 @@ async def _notify_payment(rt: Runtime, bot: Bot, tg_id: int, payment: dict) -> N
     }
     cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": " USDT"}
     amount = f"{payment['amount']}{cur_sym.get(payment['currency'], payment['currency'])}"
+    notif = texts.NOTIF_PAYMENT.format(
+        title=tariff.title if tariff else payment["tariff_id"],
+        days=tariff.days if tariff else "?",
+        amount=amount,
+        provider=provider_names.get(payment["provider"], payment["provider"]),
+        uid=tg_id, name=name,
+        source=payment.get("source") or "—",
+    )
     for admin_id in rt.cfg.admin_ids:
         try:
-            await bot.send_message(
-                admin_id,
-                texts.NOTIF_PAYMENT.format(
-                    title=tariff.title if tariff else payment["tariff_id"],
-                    days=tariff.days if tariff else "?",
-                    amount=amount,
-                    provider=provider_names.get(payment["provider"], payment["provider"]),
-                    uid=tg_id, name=name,
-                    source=payment.get("source") or "—",
-                ),
-            )
+            await bot.send_message(admin_id, notif)
         except Exception:
             pass
+    await sys_log(rt, bot, SYS_PAYMENT.format(
+        title=tariff.title if tariff else payment["tariff_id"],
+        days=tariff.days if tariff else "?",
+        amount=amount,
+        provider=provider_names.get(payment["provider"], payment["provider"]),
+        uid=tg_id, name=name,
+        source=payment.get("source") or "—",
+    ))
 
 
 async def _credit_referral(rt: Runtime, bot: Bot, tg_id: int, payment: dict) -> None:
@@ -419,6 +426,9 @@ async def _credit_referral(rt: Runtime, bot: Bot, tg_id: int, payment: dict) -> 
             )
         except Exception:
             pass
+    await sys_log(rt, bot, texts.SYS_REFBONUS.format(
+        uid=tg_id, referrer=referrer, days=bonus_days,
+    ))
 
 
 def subscription_kb(sub_url: str | None) -> InlineKeyboardMarkup:
@@ -549,3 +559,31 @@ async def card_settings(rt: Runtime) -> dict:
         "holder": (await rt.db.get_setting("card_holder", "") or "").strip(),
         "sbp": (await rt.db.get_setting("card_sbp", "") or "").strip(),
     }
+
+
+# ──────────────────────── системный канал ────────────────────────
+
+
+async def sys_channel(rt: Runtime) -> str | None:
+    """ID/username канала системных событий или None."""
+    value = (await rt.db.get_setting("sys_channel", "") or "").strip()
+    return value or None
+
+
+async def sys_log(rt: Runtime, bot: Bot, text: str) -> None:
+    """Публикует событие в системный канал (если задан). Молча глотает ошибки,
+    чтобы журнал никогда не ломал основной сценарий."""
+    channel = await sys_channel(rt)
+    if not channel:
+        return
+    try:
+        await bot.send_message(channel, text, disable_web_page_preview=True)
+    except Exception as e:
+        log.warning("sys_log to %s failed: %s", channel, e)
+
+
+async def sys_new_user(rt: Runtime, bot: Bot, tg_id: int, name: str,
+                       source: str | None, referred_by: str | None) -> None:
+    """Публикует событие о новом пользователе в системный канал."""
+    src = source or (f"реферал {referred_by}" if referred_by else "напрямую")
+    await sys_log(rt, bot, texts.SYS_NEW_USER.format(name=name, uid=tg_id, source=src))

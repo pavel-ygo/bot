@@ -662,3 +662,72 @@ ADMIN_TARIFF_EDIT_FIELD_RU = {
     "title": "название", "days": "дней",
     "price_rub": "цена", "description": "описание",
 }
+
+
+# ── системный канал (журнал событий) ──────────────────────────────────
+
+SYS_NEW_USER = (
+    "🆕 <b>Новый пользователь</b> #пользователь\n"
+    "{name} (<code>{uid}</code>)\n"
+    "Источник: {source}"
+)
+SYS_PAYMENT = (
+    "💰 <b>Оплата</b> #оплата\n"
+    "Тариф: {title} ({days} дн.)\n"
+    "Сумма: <b>{amount}</b> ({provider})\n"
+    "Клиент: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n"
+    "Источник: {source}"
+)
+SYS_CARD_RECEIPT = (
+    "🧾 <b>Чек получен</b> #оплата\n"
+    "Счёт #{pid}: {title} ({days} дн.) на <b>{amount}</b>\n"
+    "От: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n"
+    "Режим подтверждения: {mode}"
+)
+SYS_CARD_DECISION = (
+    "{icon} <b>Оплата #{pid} {decision}</b> #оплата\n"
+    "Кем: <code>{by}</code>\n"
+    "Причина: {reason}"
+)
+SYS_TRIAL = (
+    "🎁 <b>Пробный период выдан</b> #пробный\n"
+    "Клиент: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n"
+    "Срок: {days} дн."
+)
+SYS_PROMO = (
+    "🎫 <b>Промокод активирован</b> #промокод\n"
+    "Код: <code>{code}</code> (+{days} дн.)\n"
+    "Клиент: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)"
+)
+SYS_REFBONUS = (
+    "👥 <b>Реферальный бонус</b> #реферал\n"
+    "Реферал <code>{uid}</code> оплатил — <code>{referrer}</code> получает +{days} дн."
+)
+SYS_GRANT = (
+    "🎁 <b>Подписка выдана админом</b> #админ\n"
+    "Цель: <code>{target}</code>\n"
+    "Кем: <code>{by}</code>\n"
+    "{details}"
+)
+SYS_TICKET_NEW = (
+    "🎫 <b>Новое обращение #{tid}</b> #тикет\n"
+    "От: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)"
+)
+SYS_NODE_DOWN = "🔴 <b>Нода недоступна</b> #нода\nИмя: <b>{name}</b>"
+SYS_NODE_UP = "🟢 <b>Нода «{name}» вернулась в онлайн</b> #нода"
+SYS_BACKUP = "💾 <b>Бэкап БД</b> #бэкап\nФайл: <code>{name}</code> ({size} КБ)"
+SYS_REPORT = "📊 <b>Отчёт за {period}</b> #отчёт\n(полная версия — в чате с ботом)"
+SYS_ERROR = "⚠️ <b>Ошибка</b> #ошибка\n<code>{error}</code>\nКонтекст: {context}"
+ADMIN_SYS_CHANNEL_ASK = (
+    "📢 Пришлите ID канала для системных событий (вид: -1001234567890) или @username "
+    "публичного канала.\n\n"
+    "Бот должен быть администратором канала с правом публикации.\n\nДля отмены: /cancel"
+)
+ADMIN_SYS_CHANNEL_SET_OK = (
+    "✅ Системный канал сохранён: <code>{channel}</code>.\n"
+    "Проверьте, что бот может публиковать — пришлите в канале любое сообщение."
+)
+ADMIN_SYS_CHANNEL_CURRENT = "📢 Системный канал: <code>{channel}</code>"
+ADMIN_SYS_CHANNEL_NOT_SET = "Системный канал не задан"
+ADMIN_SYS_TEST_SENT = "✅ Тестовое сообщение отправлено в канал."
+ADMIN_SYS_TEST_FAIL = "❌ Не удалось отправить: {error}"

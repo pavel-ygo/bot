@@ -17,6 +17,7 @@ from ..config import Tariff
 from ..keyboards import (
     alerts_menu,
     csv_menu,
+    sys_channel_menu,
     operators_menu,
     tariff_detail_menu,
     tariffs_admin_menu,
@@ -29,7 +30,13 @@ from ..keyboards import (
     trial_settings_menu,
 )
 from ..remnawave import RemnaError
-from ..services import Runtime, deliver_subscription, subscription_kb, trial_config
+from ..services import (
+    Runtime,
+    deliver_subscription,
+    subscription_kb,
+    sys_channel,
+    trial_config,
+)
 from ..utils import fmt_date, parse_iso, utcnow
 
 
@@ -284,6 +291,10 @@ async def camp_name_input(message: Message, state: FSMContext, rt: Runtime):
 
 
 # ══════════════════════════ ПРОБНЫЙ ПЕРИОД ══════════════════════════
+
+
+class SysChannelFSM(StatesGroup):
+    channel = State()
 
 
 class OperatorFSM(StatesGroup):
@@ -1286,3 +1297,94 @@ async def tariff_new_desc(message: Message, state: FSMContext, rt: Runtime):
     await message.answer(
         texts.ADMIN_TARIFF_CREATED.format(title=title), reply_markup=admin_menu()
     )
+
+
+# ══════════════════════════ СИСТЕМНЫЙ КАНАЛ ══════════════════════════
+
+
+async def _sysch_text_and_kb(rt: Runtime):
+    channel = await sys_channel(rt)
+    current = (
+        texts.ADMIN_SYS_CHANNEL_CURRENT.format(channel=channel)
+        if channel else texts.ADMIN_SYS_CHANNEL_NOT_SET
+    )
+    text = (
+        "📢 <b>Системный канал</b>\n\n"
+        f"{current}\n\n"
+        "В канал дублируются события с хэштегами для поиска:\n"
+        "#пользователь #оплата #покупка #промокод #пробный #реферал\n"
+        "#админ #тикет #нода #бэкап #отчёт #ошибка\n\n"
+        "Бот должен быть администратором канала с правом публикации."
+    )
+    return text, sys_channel_menu(has_channel=bool(channel))
+
+
+@router.callback_query(F.data == "adm:sysch")
+async def cb_sysch(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    text, kb = await _sysch_text_and_kb(rt)
+    await query.message.edit_text(text, reply_markup=kb)
+    await query.answer()
+
+
+@router.callback_query(F.data == "adm:sysch:set")
+async def cb_sysch_set(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(SysChannelFSM.channel)
+    await query.message.edit_text(texts.ADMIN_SYS_CHANNEL_ASK)
+    await query.answer()
+
+
+@router.message(SysChannelFSM.channel)
+async def sysch_input(message: Message, state: FSMContext, rt: Runtime, bot: Bot):
+    value = (message.text or "").strip()
+    await state.clear()
+    if value.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not (value.startswith("@") or value.lstrip("-").isdigit()):
+        await message.answer("Нужен ID вида -100... или @username. Попробуйте ещё раз:")
+        await state.set_state(SysChannelFSM.channel)
+        return
+    chat_id = int(value) if value.lstrip("-").isdigit() else value
+    try:
+        await bot.send_message(chat_id, "✅ Бот подключён к этому каналу для системных событий.")
+    except Exception as e:
+        return await message.answer(
+            f"❌ Не удалось отправить сообщение в канал ({e}).\n"
+            "Добавьте бота администратором и попробуйте снова.",
+            reply_markup=admin_menu(),
+        )
+    await rt.db.set_setting("sys_channel", value)
+    await message.answer(
+        texts.ADMIN_SYS_CHANNEL_SET_OK.format(channel=value), reply_markup=admin_menu()
+    )
+
+
+@router.callback_query(F.data == "adm:sysch:test")
+async def cb_sysch_test(query: CallbackQuery, rt: Runtime, bot: Bot):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    channel = await sys_channel(rt)
+    if not channel:
+        return await query.answer("Канал не задан", show_alert=True)
+    try:
+        await bot.send_message(channel, "🧪 Тест публикации системного канала #тест")
+        await query.answer(texts.ADMIN_SYS_TEST_SENT, show_alert=True)
+    except Exception as e:
+        await query.answer(texts.ADMIN_SYS_TEST_FAIL.format(error=str(e)[:200]),
+                           show_alert=True)
+
+
+@router.callback_query(F.data == "adm:sysch:del")
+async def cb_sysch_del(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await rt.db.set_setting("sys_channel", "")
+    await query.answer("Канал убран", show_alert=True)
+    text, kb = await _sysch_text_and_kb(rt)
+    try:
+        await query.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass

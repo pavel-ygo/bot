@@ -465,6 +465,23 @@ async def test_tariffs_and_operators():
         await db.close()
 
 
+async def test_sys_channel():
+    print("системный канал:")
+    from bot.services import sys_channel as get_ch
+
+    db = await Database.create("/tmp/test_bot9.db")
+    try:
+        cfg = load_config()
+        rt = Runtime(cfg=cfg, db=db, remna=None)
+        check("channel not set by default", await get_ch(rt) is None)
+        await db.set_setting("sys_channel", "-1009999999999")
+        check("channel stored", await get_ch(rt) == "-1009999999999")
+        await db.set_setting("sys_channel", "")
+        check("channel cleared", await get_ch(rt) is None)
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
@@ -474,6 +491,7 @@ async def main():
     await test_card_provider()
     await test_segments_and_nudge()
     await test_tariffs_and_operators()
+    await test_sys_channel()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()
@@ -482,6 +500,8 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 
 

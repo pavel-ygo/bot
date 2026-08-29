@@ -11,9 +11,9 @@ from aiogram import Bot
 from . import texts
 from .keyboards import payment_nudge_menu
 from .payments import ProviderError
-from .services import Runtime, check_reminders, complete_payment
+from .services import Runtime, check_reminders, complete_payment, sys_log
 from .handlers.buy import _check_external
-from .texts import NUDGE_USER
+from .texts import NUDGE_USER, SYS_BACKUP, SYS_NODE_DOWN, SYS_NODE_UP
 from .utils import parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -99,6 +99,10 @@ async def db_backup_loop(rt: Runtime, bot: Bot) -> None:
             for old in backups[:-BACKUP_KEEP]:
                 old.unlink()
             log.info("DB backup created: %s", target.name)
+            await sys_log(
+                rt, bot,
+                SYS_BACKUP.format(name=target.name, size=target.stat().st_size // 1024),
+            )
             if await rt.db.get_setting("alerts_backup", "1") == "1":
                 await send_db_backup_to_admins(rt, bot)
         except Exception:
@@ -166,6 +170,7 @@ async def node_monitor(rt: Runtime, bot: Bot) -> None:
                         await _send_admins(rt, bot, texts.NODE_DOWN_ALERT.format(
                             name=name, since="только что",
                         ))
+                        await sys_log(rt, bot, SYS_NODE_DOWN.format(name=name))
                     elif connected and prev_state == "down":
                         minutes = "?"
                         if prev and prev.get("since"):
@@ -176,6 +181,7 @@ async def node_monitor(rt: Runtime, bot: Bot) -> None:
                         await _send_admins(rt, bot, texts.NODE_UP_ALERT.format(
                             name=name, minutes=minutes,
                         ))
+                        await sys_log(rt, bot, SYS_NODE_UP.format(name=name))
                     elif connected and prev_state is None:
                         await rt.db.set_node_state(uuid, name, "ok")
         except Exception:
@@ -196,7 +202,9 @@ async def periodic_report(rt: Runtime, bot: Bot) -> None:
                     nodes = await rt.remna.list_nodes()
                 except Exception:
                     pass
-                await _send_admins(rt, bot, _format_report(rt, 4, stats, nodes))
+                report_text = _format_report(rt, 4, stats, nodes)
+                await _send_admins(rt, bot, report_text)
+                await sys_log(rt, bot, texts.SYS_REPORT.format(period="4 часа"))
         except Exception:
             log.exception("periodic report error")
         await asyncio.sleep(REPORT_INTERVAL)

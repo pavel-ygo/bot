@@ -15,7 +15,7 @@ from ..keyboards import (admin_back, admin_confirm_broadcast, admin_menu,
                          broadcast_audience_menu)
 from ..payments import ProviderError
 from ..remnawave import RemnaError
-from ..services import Runtime, deliver_subscription, subscription_kb
+from ..services import Runtime, deliver_subscription, subscription_kb, sys_log
 from ..utils import fmt_date, parse_iso, utcnow
 
 router = Router(name="admin")
@@ -406,6 +406,9 @@ async def grant_days(message: Message, state: FSMContext, rt: Runtime, bot: Bot)
             )
         except Exception as e:
             log.warning("notify granted user: %s", e)
+    await sys_log(rt, bot, texts.SYS_GRANT.format(
+        target=target, by=message.from_user.id, details=result_text,
+    ))
 
 
 # ──────────────────────── включение / отключение ────────────────────────

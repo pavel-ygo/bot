@@ -13,7 +13,13 @@ from .. import texts
 from ..keyboards import faq_menu, main_menu, no_sub_menu, sub_menu
 from ..qr import qr_file
 from ..remnawave import RemnaError
-from ..services import Runtime, subscription_card, subscription_kb, trial_config
+from ..services import (
+    Runtime,
+    subscription_card,
+    subscription_kb,
+    sys_new_user,
+    trial_config,
+)
 
 router = Router(name="user")
 log = logging.getLogger(__name__)
@@ -55,6 +61,11 @@ async def cmd_start(message: Message, rt: Runtime, bot: Bot):
         message.from_user.id, message.from_user.username,
         message.from_user.first_name, source=source, referred_by=referred_by,
     )
+    if created:
+        await sys_new_user(
+            rt, bot, message.from_user.id,
+            message.from_user.first_name or "—", source, referred_by,
+        )
     if created and rt.cfg.admin_ids:
         for admin_id in rt.cfg.admin_ids:
             try:

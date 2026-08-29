@@ -16,6 +16,7 @@ from ..services import (
     deliver_subscription,
     is_channel_member,
     subscription_kb,
+    sys_log,
     trial_config,
 )
 
@@ -96,6 +97,11 @@ async def promo_input(message: Message, state: FSMContext, rt: Runtime, bot: Bot
         reply_markup=subscription_kb(url),
         disable_web_page_preview=True,
     )
+    await sys_log(rt, bot, texts.SYS_PROMO.format(
+        code=promo["code"], days=promo["days"],
+        uid=message.from_user.id,
+        name=message.from_user.first_name or message.from_user.username or str(message.from_user.id),
+    ))
 
 
 # ──────────────────────────── пробный период ────────────────────────────
@@ -119,6 +125,11 @@ async def _grant_trial(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict) 
         reply_markup=subscription_kb(url),
         disable_web_page_preview=True,
     )
+    await sys_log(rt, bot, texts.SYS_TRIAL.format(
+        uid=query.from_user.id,
+        name=query.from_user.first_name or query.from_user.username or str(query.from_user.id),
+        days=tcfg["days"],
+    ))
 
 
 async def _trial_check(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict) -> None:

@@ -13,7 +13,7 @@ from .. import texts
 from ..keyboards import (admin_back, admin_card_menu, card_pay_menu,
                          card_reject_reasons_menu, card_receipt_admin_menu,
                          card_receipt_auto_menu)
-from ..services import Runtime, card_settings, complete_payment
+from ..services import Runtime, card_settings, complete_payment, sys_log
 
 router = Router(name="pay-card")
 log = logging.getLogger(__name__)
@@ -356,6 +356,10 @@ async def cb_auto_revoke(query: CallbackQuery, rt: Runtime, bot: Bot):
         await bot.send_message(tg_id, texts.CARD_REVOKED_USER.format(pid=pid))
     except Exception:
         pass
+    await sys_log(rt, bot, texts.SYS_CARD_DECISION.format(
+        icon="🚫", pid=pid, decision="отменена (деньги не поступили)",
+        by=query.from_user.id, reason="не оплатил",
+    ))
 
 
 # ══════════════════════════ админ: настройки реквизитов ══════════════════════════
