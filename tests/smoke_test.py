@@ -336,6 +336,7 @@ async def test_card_provider():
         check("card off without credentials", providers["card"] is False)
         check("stars default off", providers["stars"] is False)
         check("cryptobot default off", providers["cryptobot"] is False)
+        check("yookassa default off", providers["yookassa"] is False)
 
         # задали реквизиты -> карта доступна
         await rt.db.set_setting("card_number", "2202 2037 1234 5678")

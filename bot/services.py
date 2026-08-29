@@ -42,7 +42,7 @@ class Runtime:
         return {
             "card": card_ready and await self.db.get_setting("pay_card", "1") == "1",
             "yookassa": bool(self.yookassa and tariff.price_rub)
-            and await self.db.get_setting("pay_yookassa", "1") == "1",
+            and await self.db.get_setting("pay_yookassa", "0") == "1",
             "stars": bool(tariff.price_stars)
             and self.cfg.stars_enabled
             and await self.db.get_setting("pay_stars", "0") == "1",
@@ -384,9 +384,10 @@ def subscription_card(rt: Runtime, rw_user: dict) -> str:
 
 
 async def card_settings(rt: Runtime) -> dict:
-    """Реквизиты карты для ручной оплаты (хранятся в БД, задаются в админке)."""
+    """Реквизиты для ручной оплаты (хранятся в БД, задаются в админке)."""
     return {
         "number": (await rt.db.get_setting("card_number", "") or "").strip(),
         "bank": (await rt.db.get_setting("card_bank", "") or "").strip(),
         "holder": (await rt.db.get_setting("card_holder", "") or "").strip(),
+        "sbp": (await rt.db.get_setting("card_sbp", "") or "").strip(),
     }

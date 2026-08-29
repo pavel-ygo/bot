@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -26,6 +27,7 @@ class CardSettingsStates(StatesGroup):
     number = State()
     bank = State()
     holder = State()
+    sbp = State()
 
 
 def _is_admin(rt: Runtime, user_id: int) -> bool:
@@ -38,9 +40,11 @@ async def _card_text(rt: Runtime, tariff, amount: float) -> str:
     holder_line = (
         texts.CARD_HOLDER_LINE.format(holder=cs["holder"]) if cs["holder"] else ""
     )
+    sbp_line = texts.CARD_SBP_LINE.format(sbp=cs["sbp"]) if cs["sbp"] else ""
     return texts.CARD_PAY_TEXT.format(
         title=tariff.title, days=tariff.days, amount=f"{amount:g} ₽",
         card=cs["number"], bank_line=bank_line, holder_line=holder_line,
+        sbp_line=sbp_line,
     )
 
 
@@ -177,6 +181,7 @@ async def _card_admin_text_and_kb(rt: Runtime):
         card=cs["number"] or texts.ADMIN_CARD_NOT_SET,
         bank=cs["bank"] or texts.ADMIN_CARD_NOT_SET,
         holder=cs["holder"] or texts.ADMIN_CARD_NOT_SET,
+        sbp=cs["sbp"] or texts.ADMIN_CARD_NOT_SET,
     )
     return text, admin_card_menu(enabled, bool(cs["number"]))
 
@@ -251,6 +256,12 @@ async def cb_card_holder(query: CallbackQuery, state: FSMContext, rt: Runtime):
     await cb_card_set(query, state, rt)
 
 
+@router.callback_query(F.data == "adm:card:sbp")
+async def cb_card_sbp(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    query.data = "adm:card:set:sbp"
+    await cb_card_set(query, state, rt)
+
+
 @router.message(CardSettingsStates.number)
 async def card_num_input(message: Message, state: FSMContext, rt: Runtime):
     value = (message.text or "").strip()
@@ -283,4 +294,22 @@ async def card_holder_input(message: Message, state: FSMContext, rt: Runtime):
     if value.lower() == "/cancel":
         return await message.answer("Отменено.")
     await rt.db.set_setting("card_holder", value[:64])
+    await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())
+
+
+@router.message(CardSettingsStates.sbp)
+async def card_sbp_input(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    await state.clear()
+    if value.lower() == "/cancel":
+        return await message.answer("Отменено.")
+    if value == "0":
+        await rt.db.set_setting("card_sbp", "")
+        return await message.answer("🗑 СБП убран из реквизитов.", reply_markup=admin_back())
+    digits = re.sub(r"\D", "", value)
+    if not (10 <= len(digits) <= 15):
+        await message.answer("Нужен номер телефона, например +79001234567 (или 0 — убрать):")
+        await state.set_state(CardSettingsStates.sbp)
+        return
+    await rt.db.set_setting("card_sbp", value)
     await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())

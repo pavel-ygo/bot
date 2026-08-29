@@ -301,6 +301,7 @@ def admin_card_menu(enabled: bool, has_card: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏦 Банк", callback_data="adm:card:bank"),
             InlineKeyboardButton(text="👤 Получатель", callback_data="adm:card:holder"),
         ],
+        [InlineKeyboardButton(text="📲 СБП (телефон)", callback_data="adm:card:sbp")],
     ]
     if has_card:
         rows.append([InlineKeyboardButton(text="🗑 Удалить реквизиты", callback_data="adm:card:del")])

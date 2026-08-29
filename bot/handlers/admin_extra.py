@@ -404,7 +404,7 @@ async def _pay_text_and_kb(rt: Runtime):
         "stars": rt.cfg.stars_enabled,
         "cryptobot": rt.cryptobot is not None and rt.cfg.cryptobot_enabled,
     }
-    defaults = {"card": "1", "yookassa": "1", "stars": "0", "cryptobot": "0"}
+    defaults = {"card": "1", "yookassa": "0", "stars": "0", "cryptobot": "0"}
     states = {
         name: await rt.db.get_setting(f"pay_{name}", defaults[name]) == "1"
         for name in configured
