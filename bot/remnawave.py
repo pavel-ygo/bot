@@ -51,9 +51,20 @@ class RemnawaveClient:
             try:
                 body = resp.json()
                 msg = body.get("message") or body.get("error") or body
-                detail = msg if isinstance(msg, str) else str(msg)[:300]
+                if isinstance(msg, list):
+                    # NestJS ValidationPipe: массив требований по полям
+                    detail = "; ".join(str(m) for m in msg)[:500]
+                elif isinstance(msg, str):
+                    detail = msg
+                else:
+                    detail = str(msg)[:500]
+                # некоторые фильтры прячут детали — добавим сырой ответ
+                if "validation" in detail.lower() and body.get("message") == detail:
+                    raw = str(body)[:500]
+                    if raw != detail:
+                        detail = f"{detail} | raw: {raw}"
             except Exception:
-                detail = resp.text[:300]
+                detail = resp.text[:500]
             raise RemnaError(f"HTTP {resp.status_code}: {detail}", status=resp.status_code)
         if not resp.content:
             return {}
