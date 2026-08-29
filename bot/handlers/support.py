@@ -95,21 +95,6 @@ async def support_first_message(message: Message, state: FSMContext, rt: Runtime
     )
 
 
-@router.message(F.content_type.in_(MEDIA_TYPES))
-async def support_followup(message: Message, rt: Runtime, bot: Bot):
-    """Свободные сообщения: если есть открытый тикет — пересылаем админам."""
-    if (message.text or "").startswith("/"):
-        return
-    ticket = await rt.db.open_ticket_for_user(message.from_user.id)
-    if ticket is None:
-        return
-    await rt.db.add_ticket_message(
-        ticket["id"], "user", message.from_user.id, message.chat.id, message.message_id
-    )
-    await _relay_to_admins(rt, bot, message, ticket["id"])
-    await message.answer("📨 Передано в поддержку.")
-
-
 @router.callback_query(F.data.startswith("tk:close:"))
 async def cb_user_close(query: CallbackQuery, rt: Runtime, bot: Bot):
     ticket = await rt.db.get_ticket(int(query.data.rsplit(":", 1)[1]))
@@ -243,3 +228,29 @@ async def cb_admin_ticket(query: CallbackQuery, rt: Runtime):
         reply_markup=ticket_admin_menu(ticket["id"], ticket["status"] == "answered"),
     )
     await query.answer()
+
+
+@router.message(F.content_type.in_(MEDIA_TYPES))
+async def support_followup(message: Message, rt: Runtime, bot: Bot):
+    """Фолбэк для свободных сообщений (регистрируется последним).
+
+    1) pending-оплата картой -> обрабатываем как чек (даже после рестарта бота);
+    2) открытый тикет -> пересылаем админам;
+    3) иначе — молча игнорируем.
+    """
+    if (message.text or "").startswith("/"):
+        return
+    if _is_admin(rt, message.from_user.id):
+        return  # сообщения админов обрабатывают FSM-хэндлеры выше
+    from .pay_card import process_card_receipt
+
+    if await process_card_receipt(rt, bot, message):
+        return
+    ticket = await rt.db.open_ticket_for_user(message.from_user.id)
+    if ticket is None:
+        return
+    await rt.db.add_ticket_message(
+        ticket["id"], "user", message.from_user.id, message.chat.id, message.message_id
+    )
+    await _relay_to_admins(rt, bot, message, ticket["id"])
+    await message.answer("📨 Передано в поддержку.")

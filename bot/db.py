@@ -425,6 +425,15 @@ class Database:
         )
         await self._db.commit()
 
+    async def latest_pending_card_payment(self, tg_id: int) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM payments WHERE tg_id = ? AND provider = 'card' "
+            "AND status = 'pending' ORDER BY id DESC LIMIT 1",
+            (tg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
     async def pending_payments(self, provider: str | None = None) -> list[dict]:
         query = "SELECT * FROM payments WHERE status = 'pending'"
         params: tuple = ()

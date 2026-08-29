@@ -76,16 +76,23 @@ async def cb_i_paid(query: CallbackQuery, state: FSMContext, rt: Runtime):
 
 @router.message(CardPayStates.waiting_receipt, F.content_type.in_(RECEIPT_TYPES))
 async def card_receipt(message: Message, state: FSMContext, rt: Runtime, bot: Bot):
-    data = await state.get_data()
     await state.clear()
     if (message.text or "").strip().startswith("/cancel"):
         await message.answer("Отменено.")
         return
-    pid = data.get("pid")
-    payment = await rt.db.get_payment(pid) if pid else None
-    if not payment or payment["status"] != "pending":
-        await message.answer(texts.CARD_ALREADY_DONE)
-        return
+    await process_card_receipt(rt, bot, message)
+
+
+async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
+    """Обрабатывает сообщение как чек к последней pending-оплате картой.
+
+    Работает и после перезапуска бота (когда FSM-состояние потеряно).
+    Возвращает True, если сообщение обработано как чек.
+    """
+    payment = await rt.db.latest_pending_card_payment(message.from_user.id)
+    if payment is None:
+        return False
+    pid = payment["id"]
 
     tariff = rt.cfg.tariffs.get(payment["tariff_id"])
     bot_user = await rt.db.get_bot_user(message.from_user.id) or {}
@@ -138,6 +145,7 @@ async def card_receipt(message: Message, state: FSMContext, rt: Runtime, bot: Bo
         texts.CARD_RECEIPT_SENT,
         reply_markup=card_pay_menu(pid),
     )
+    return True
 
 
 @router.message(CardPayStates.waiting_receipt)
