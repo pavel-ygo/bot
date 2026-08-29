@@ -10,10 +10,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from .. import texts
-from ..keyboards import (admin_back, admin_card_menu, card_pay_menu,
+from ..keyboards import (admin_back, admin_card_menu, admin_menu, card_pay_menu,
                          card_reject_reasons_menu, card_receipt_admin_menu,
-                         card_receipt_auto_menu)
-from ..services import Runtime, card_settings, complete_payment, sys_log
+                         card_receipt_auto_menu, card_admin_detail_menu,
+                         cards_admin_menu)
+from ..services import (Runtime, active_pay_cards, complete_payment,
+                         migrate_single_card, sys_log)
 
 router = Router(name="pay-card")
 log = logging.getLogger(__name__)
@@ -23,6 +25,13 @@ RECEIPT_TYPES = {"photo", "document", "video", "text", "voice", "audio"}
 
 class CardPayStates(StatesGroup):
     waiting_receipt = State()
+
+
+class CardAddFSM(StatesGroup):
+    bank = State()
+    number = State()
+    holder = State()
+    sbp = State()
 
 
 class CardRejectStates(StatesGroup):
@@ -45,17 +54,20 @@ async def _can_confirm(rt: Runtime, user_id: int) -> bool:
     return await rt.is_payment_operator(user_id)
 
 
-async def _card_text(rt: Runtime, tariff, amount: float) -> str:
-    cs = await card_settings(rt)
-    bank_line = texts.CARD_BANK_LINE.format(bank=cs["bank"]) if cs["bank"] else ""
+async def _card_text(rt: Runtime, tariff, card: dict, smart: float) -> str:
     holder_line = (
-        texts.CARD_HOLDER_LINE.format(holder=cs["holder"]) if cs["holder"] else ""
+        texts.CARD_HOLDER_LINE.format(holder=card["holder"]) if card.get("holder") else ""
     )
-    sbp_line = texts.CARD_SBP_LINE.format(sbp=cs["sbp"]) if cs["sbp"] else ""
+    sbp_line = (
+        texts.CARD_SBP_LINE.format(sbp=card["sbp"]) if card.get("sbp") else ""
+    )
+    smart_on = await rt.db.get_setting("smart_sum", "1") == "1"
+    hint = texts.CARD_SMART_HINT if smart_on else ""
     return texts.CARD_PAY_TEXT.format(
-        title=tariff.title, days=tariff.days, amount=f"{amount:g} ₽",
-        card=cs["number"], bank_line=bank_line, holder_line=holder_line,
-        sbp_line=sbp_line,
+        title=tariff.title, days=tariff.days,
+        smart=f"{smart:.2f} ₽", smart_hint=hint,
+        bank=card["bank"], card=card["number"],
+        holder_line=holder_line, sbp_line=sbp_line,
     )
 
 
@@ -107,11 +119,13 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
     tariff = rt.cfg.tariffs.get(payment["tariff_id"])
     bot_user = await rt.db.get_bot_user(message.from_user.id) or {}
     name = bot_user.get("first_name") or bot_user.get("username") or str(message.from_user.id)
+    pay_amount = float(payment["smart_amount"] or payment["amount"] or 0)
+    amount_str = f"{pay_amount:.2f}".rstrip("0").rstrip(".")
     admin_info = texts.CARD_TO_ADMIN.format(
         pid=pid,
         title=tariff.title if tariff else payment["tariff_id"],
         days=tariff.days if tariff else "?",
-        amount=f"{float(payment['amount']):g} ₽",
+        amount=f"{amount_str} ₽",
         uid=message.from_user.id, name=name,
     )
 
@@ -146,7 +160,7 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
                         pid=pid,
                         title=tariff.title if tariff else payment["tariff_id"],
                         days=tariff.days if tariff else "?",
-                        amount=f"{float(payment['amount']):g} ₽",
+                        amount=f"{amount_str} ₽",
                         uid=message.from_user.id, name=name,
                     ),
                     reply_markup=card_receipt_auto_menu(pid),
@@ -300,9 +314,19 @@ async def cb_show_details(query: CallbackQuery, rt: Runtime):
     if tariff is None:
         await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
         return
-    amount = float(payment["amount"]) if payment["amount"] else (tariff.price_rub or 0)
+    card_id = payment.get("card_id")
+    card = await rt.db.get_pay_card(card_id) if card_id else None
+    if card is None:
+        cards = await active_pay_cards(rt)
+        card = cards[0] if cards else None
+    if card is None:
+        await query.answer("Карты недоступны, напишите в поддержку", show_alert=True)
+        return
+    smart = float(payment["smart_amount"]) if payment.get("smart_amount") else (
+        float(payment["amount"]) if payment["amount"] else (tariff.price_rub or 0)
+    )
     await query.message.answer(
-        await _card_text(rt, tariff, amount),
+        await _card_text(rt, tariff, card, smart),
         reply_markup=card_pay_menu(pid),
     )
     await query.answer()
@@ -366,19 +390,30 @@ async def cb_auto_revoke(query: CallbackQuery, rt: Runtime, bot: Bot):
 
 
 async def _card_admin_text_and_kb(rt: Runtime):
-    cs = await card_settings(rt)
     enabled = await rt.db.get_setting("pay_card", "1") == "1"
+    smart = await rt.db.get_setting("smart_sum", "1") == "1"
+    cards = await rt.db.pay_cards()
+    if cards:
+        lines = "".join(
+            texts.ADMIN_CARD_LIST_LINE.format(
+                enabled=texts.ADMIN_CARD_ON_MARK if c["enabled"] else texts.ADMIN_CARD_OFF_MARK,
+                bank=c["bank"], number=c["number"],
+                sbp_mark=texts.ADMIN_CARD_SBP_MARK if c["sbp"] else "",
+            )
+            for c in cards
+        )
+    else:
+        lines = texts.ADMIN_CARDS_EMPTY + "\n"
     auto = await rt.db.get_setting("auto_approve_receipts", "0") == "1"
     text = texts.ADMIN_CARD_SETTINGS.format(
         status=texts.ADMIN_CARD_ON if enabled else texts.ADMIN_CARD_OFF,
-        card=cs["number"] or texts.ADMIN_CARD_NOT_SET,
-        bank=cs["bank"] or texts.ADMIN_CARD_NOT_SET,
-        holder=cs["holder"] or texts.ADMIN_CARD_NOT_SET,
-        sbp=cs["sbp"] or texts.ADMIN_CARD_NOT_SET,
-        auto=texts.ADMIN_CARD_AUTO_ON if auto else texts.ADMIN_CARD_AUTO_OFF,
-        auto_hint=texts.ADMIN_CARD_AUTO_HINT_ON if auto else texts.ADMIN_CARD_AUTO_HINT_OFF,
+        smart=texts.SMART_SUM_ON if smart else texts.SMART_SUM_OFF,
+        cards_list=lines,
+    ) + (
+        "\n⚙️ Автоподтверждение чеков: "
+        + (texts.ADMIN_CARD_AUTO_ON if auto else texts.ADMIN_CARD_AUTO_OFF)
     )
-    return text, admin_card_menu(enabled, bool(cs["number"]), auto)
+    return text, admin_card_menu(enabled, bool(cards), auto)
 
 
 @router.callback_query(F.data == "adm:card")
@@ -386,8 +421,10 @@ async def cb_card_menu(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
     await state.clear()  # сбросить зависший ввод, если был
-    text, kb = await _card_admin_text_and_kb(rt)
-    await query.message.edit_text(text, reply_markup=kb)
+    await migrate_single_card(rt)
+    cards = await rt.db.pay_cards()
+    text = (await _card_admin_text_and_kb(rt))[0]
+    await query.message.edit_text(text, reply_markup=cards_admin_menu(cards))
     await query.answer()
 
 
@@ -413,102 +450,137 @@ async def cb_card_auto(query: CallbackQuery, rt: Runtime):
     await query.answer("Сохранено")
 
 
-@router.callback_query(F.data == "adm:card:del")
-async def cb_card_del(query: CallbackQuery, rt: Runtime):
+# ══════════════════════════ управление картами ══════════════════════════
+
+
+@router.callback_query(F.data.startswith("adm:card2:info:"))
+async def cb_card2_info(query: CallbackQuery, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
-    for key in ("card_number", "card_bank", "card_holder"):
-        await rt.db.set_setting(key, "")
-    text, kb = await _card_admin_text_and_kb(rt)
-    await query.message.edit_text(text, reply_markup=kb)
-    await query.answer(texts.ADMIN_CARD_CLEARED, show_alert=True)
-
-
-FIELD_TO_STATE = {
-    "num": "number",
-    "bank": "bank",
-    "holder": "holder",
-    "sbp": "sbp",
-}
-
-
-@router.callback_query(F.data.startswith("adm:card:set:"))
-async def cb_card_set(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    if not _is_admin(rt, query.from_user.id):
+    card = await rt.db.get_pay_card(int(query.data.rsplit(":", 1)[1]))
+    if not card:
+        await query.answer("Карта не найдена", show_alert=True)
         return
-    field = query.data.rsplit(":", 1)[1]
-    if field not in FIELD_TO_STATE:
-        await query.answer("Неизвестное поле", show_alert=True)
-        return
-    prompts = {
-        "num": texts.ADMIN_CARD_ASK_NUM,
-        "bank": texts.ADMIN_CARD_ASK_BANK,
-        "holder": texts.ADMIN_CARD_ASK_HOLDER,
-        "sbp": texts.ADMIN_CARD_ASK_SBP,
-    }
-    await state.set_state(getattr(CardSettingsStates, FIELD_TO_STATE[field]))
-    await query.message.answer(
-        prompts[field], reply_markup=admin_back()
+    await query.message.edit_text(
+        texts.ADMIN_CARD_DETAIL.format(
+            bank=card["bank"], number=card["number"],
+            holder=card["holder"] or "—", sbp=card["sbp"] or "—",
+            status=(texts.ADMIN_CARD_ON if card["enabled"] else texts.ADMIN_CARD_OFF),
+        ),
+        reply_markup=card_admin_detail_menu(card),
     )
     await query.answer()
 
 
-@router.message(CardSettingsStates.number)
-async def card_num_input(message: Message, state: FSMContext, rt: Runtime):
+@router.callback_query(F.data.startswith("adm:card2:tgl:"))
+async def cb_card2_toggle(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    card = await rt.db.get_pay_card(int(query.data.rsplit(":", 1)[1]))
+    if not card:
+        await query.answer("Карта не найдена", show_alert=True)
+        return
+    if card["enabled"]:
+        enabled_cards = await rt.db.pay_cards(only_enabled=True)
+        if len(enabled_cards) <= 1:
+            return await query.answer(texts.ADMIN_CARD_LAST, show_alert=True)
+    await rt.db.set_pay_card_enabled(card["id"], not card["enabled"])
+    await cb_card2_info(query, rt)
+
+
+@router.callback_query(F.data.startswith("adm:card2:del:"))
+async def cb_card2_delete(query: CallbackQuery, rt: Runtime, state: FSMContext):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await rt.db.delete_pay_card(int(query.data.rsplit(":", 1)[1]))
+    await query.answer(texts.ADMIN_CARD_DELETED, show_alert=True)
+    await cb_card_menu(query, state, rt)
+
+
+@router.callback_query(F.data == "adm:card2:smart")
+async def cb_card2_smart(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    current = await rt.db.get_setting("smart_sum", "1") == "1"
+    await rt.db.set_setting("smart_sum", "0" if current else "1")
+    await query.answer("Сохранено")
+    text = (await _card_admin_text_and_kb(rt))[0]
+    cards = await rt.db.pay_cards()
+    try:
+        await query.message.edit_text(text, reply_markup=cards_admin_menu(cards))
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "adm:card2:add")
+async def cb_card2_add(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(CardAddFSM.bank)
+    await query.message.edit_text(texts.ADMIN_CARD_ASK_BANK2)
+    await query.answer()
+
+
+@router.message(CardAddFSM.bank)
+async def card2_bank_input(message: Message, state: FSMContext, rt: Runtime):
     value = (message.text or "").strip()
-    await state.clear()
     if value.lower() == "/cancel":
-        return await message.answer("Отменено.", reply_markup=admin_back())
-    # выкидываем ВСЁ, кроме цифр: пробелы, дефисы, неразрывные пробелы при копипасте
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not (1 <= len(value) <= 48):
+        await message.answer("Название банка 1–48 символов:")
+        return
+    await state.update_data(bank=value)
+    await state.set_state(CardAddFSM.number)
+    await message.answer(texts.ADMIN_CARD_ASK_NUM)
+
+
+@router.message(CardAddFSM.number)
+async def card2_number_input(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
     digits = re.sub(r"\D", "", value)
     if not (12 <= len(digits) <= 20):
         await message.answer(
-            "Похоже, это не номер карты — нужно 12–20 цифр.\n"
-            "Можно с пробелами или дефисами, например: 2200 1234 5678 9010",
+            "Нужно 12–20 цифр. Можно с пробелами/дефисами, например: 2200 1234 5678 9010"
         )
-        await state.set_state(CardSettingsStates.number)
         return
-    formatted = " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
-    await rt.db.set_setting("card_number", formatted)
-    await message.answer(
-        texts.ADMIN_CARD_SET_OK + f"\n💳 <code>{formatted}</code>",
-        reply_markup=admin_back(),
+    await state.update_data(number=digits)
+    await state.set_state(CardAddFSM.holder)
+    await message.answer(texts.ADMIN_CARD_ASK_HOLDER)
+
+
+@router.message(CardAddFSM.holder)
+async def card2_holder_input(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    if value.lower() == "/cancel":
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if value == "-":
+        value = ""
+    await state.update_data(holder=value[:64])
+    await state.set_state(CardAddFSM.sbp)
+    await message.answer(texts.ADMIN_CARD_ASK_SBP)
+
+
+@router.message(CardAddFSM.sbp)
+async def card2_sbp_input(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    data = await state.get_data()
+    await state.clear()
+    if value.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    sbp = ""
+    if value not in ("-", "0"):
+        digits = re.sub(r"\D", "", value)
+        if digits and 10 <= len(digits) <= 15:
+            sbp = value
+    await rt.db.add_pay_card(
+        bank=data.get("bank", "Банк"),
+        number=data.get("number", ""),
+        holder=data.get("holder", ""),
+        sbp=sbp,
     )
-
-
-@router.message(CardSettingsStates.bank)
-async def card_bank_input(message: Message, state: FSMContext, rt: Runtime):
-    value = (message.text or "").strip()
-    await state.clear()
-    if value.lower() == "/cancel":
-        return await message.answer("Отменено.")
-    await rt.db.set_setting("card_bank", value[:64])
-    await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())
-
-
-@router.message(CardSettingsStates.holder)
-async def card_holder_input(message: Message, state: FSMContext, rt: Runtime):
-    value = (message.text or "").strip()
-    await state.clear()
-    if value.lower() == "/cancel":
-        return await message.answer("Отменено.")
-    await rt.db.set_setting("card_holder", value[:64])
-    await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())
-
-
-@router.message(CardSettingsStates.sbp)
-async def card_sbp_input(message: Message, state: FSMContext, rt: Runtime):
-    value = (message.text or "").strip()
-    await state.clear()
-    if value.lower() == "/cancel":
-        return await message.answer("Отменено.")
-    if value == "0":
-        await rt.db.set_setting("card_sbp", "")
-        return await message.answer("🗑 СБП убран из реквизитов.", reply_markup=admin_back())
-    digits = re.sub(r"\D", "", value)
-    if not (10 <= len(digits) <= 15):
-        await message.answer("Нужен номер телефона, например +79001234567 (или 0 — убрать):")
-        await state.set_state(CardSettingsStates.sbp)
-        return
-    await rt.db.set_setting("card_sbp", value)
-    await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())
+    await message.answer(
+        texts.ADMIN_CARD_ADDED.format(bank=data.get("bank", "")),
+        reply_markup=admin_menu(),
+    )

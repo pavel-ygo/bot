@@ -453,3 +453,48 @@ def sys_channel_menu(*, has_channel: bool) -> InlineKeyboardMarkup:
         ])
     rows += admin_back().inline_keyboard
     return _kb(rows)
+
+
+# ── выбор карты покупателем ────────────────────────────────────────────
+
+
+def card_select_menu(cards: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for c in cards:
+        sbp = " 📲" if c.get("sbp") else ""
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{c['bank']}{sbp} — {c['number']}",
+                callback_data=f"pc:pick:{c['id']}",
+            )
+        ])
+    rows += back_to_menu()
+    return _kb(rows)
+
+
+# ── управление картами в админке ───────────────────────────────────────
+
+
+def cards_admin_menu(cards: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for c in cards:
+        mark = "✅" if c["enabled"] else "🚫"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{mark} {c['bank']} — {c['number']}",
+                callback_data=f"adm:card2:info:{c['id']}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Добавить карту", callback_data="adm:card2:add")])
+    rows.append([InlineKeyboardButton(text="⚙️ Умная сумма вкл/выкл", callback_data="adm:card2:smart")])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+def card_admin_detail_menu(card: dict) -> InlineKeyboardMarkup:
+    toggle = "🚫 Отключить" if card["enabled"] else "✅ Включить"
+    return _kb([
+        [InlineKeyboardButton(text=toggle, callback_data=f"adm:card2:tgl:{card['id']}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm:card2:del:{card['id']}")],
+        [InlineKeyboardButton(text="⬅️ К списку карт", callback_data="adm:card")],
+    ])

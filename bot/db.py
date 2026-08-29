@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets (status);
 
+CREATE TABLE IF NOT EXISTS pay_cards (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    bank    TEXT NOT NULL,
+    number  TEXT NOT NULL,
+    holder  TEXT DEFAULT '',
+    sbp     TEXT DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS node_alerts (
     node_uuid  TEXT PRIMARY KEY,
     node_name  TEXT NOT NULL,
@@ -136,6 +145,14 @@ class Database:
             await self._db.execute("ALTER TABLE payments ADD COLUMN source TEXT")
         if not await has_col("bot_users", "referred_by"):
             await self._db.execute("ALTER TABLE bot_users ADD COLUMN referred_by TEXT")
+        if not await has_col("payments", "card_id"):
+            await self._db.execute(
+                "ALTER TABLE payments ADD COLUMN card_id INTEGER"
+            )
+        if not await has_col("payments", "smart_amount"):
+            await self._db.execute(
+                "ALTER TABLE payments ADD COLUMN smart_amount REAL"
+            )
         if not await has_col("payments", "nudge_sent"):
             await self._db.execute(
                 "ALTER TABLE payments ADD COLUMN nudge_sent INTEGER NOT NULL DEFAULT 0"
@@ -742,3 +759,49 @@ class Database:
         ) as cur:
             ref_bonuses = (await cur.fetchone())[0] or 0
         return {"sales": sales, "rub": rub, "new_users": new_users, "ref_bonuses": ref_bonuses}
+
+    # ── карты для приёма переводов ─────────────────────────────────────
+
+    async def pay_cards(self, only_enabled: bool = False) -> list[dict]:
+        query = "SELECT * FROM pay_cards"
+        if only_enabled:
+            query += " WHERE enabled = 1"
+        query += " ORDER BY id"
+        async with self._db.execute(query) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def add_pay_card(self, bank: str, number: str,
+                           holder: str = "", sbp: str = "") -> int:
+        cur = await self._db.execute(
+            "INSERT INTO pay_cards (bank, number, holder, sbp, enabled) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (bank, number, holder, sbp),
+        )
+        await self._db.commit()
+        return cur.lastrowid
+
+    async def set_pay_card_enabled(self, card_id: int, enabled: bool) -> None:
+        await self._db.execute(
+            "UPDATE pay_cards SET enabled = ? WHERE id = ?",
+            (1 if enabled else 0, card_id),
+        )
+        await self._db.commit()
+
+    async def delete_pay_card(self, card_id: int) -> None:
+        await self._db.execute("DELETE FROM pay_cards WHERE id = ?", (card_id,))
+        await self._db.commit()
+
+    async def get_pay_card(self, card_id: int) -> dict | None:
+        async with self._db.execute(
+            "SELECT * FROM pay_cards WHERE id = ?", (card_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def smart_amount_taken(self, value: float) -> bool:
+        async with self._db.execute(
+            "SELECT 1 FROM payments WHERE provider = 'card' AND status = 'pending' "
+            "AND smart_amount = ? LIMIT 1",
+            (value,),
+        ) as cur:
+            return await cur.fetchone() is not None

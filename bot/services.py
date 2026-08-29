@@ -561,6 +561,38 @@ async def card_settings(rt: Runtime) -> dict:
     }
 
 
+# ──────────────────────── карты приёма платежей ────────────────────────
+
+
+async def active_pay_cards(rt: Runtime) -> list[dict]:
+    return await rt.db.pay_cards(only_enabled=True)
+
+
+async def migrate_single_card(rt: Runtime) -> None:
+    """Переносит старые реквизиты (card_number/card_bank/...) в новую таблицу карт."""
+    if await rt.db.pay_cards():
+        return
+    number = (await rt.db.get_setting("card_number", "") or "").strip()
+    if not number:
+        return
+    bank = (await rt.db.get_setting("card_bank", "") or "").strip() or "Банк"
+    holder = (await rt.db.get_setting("card_holder", "") or "").strip()
+    sbp = (await rt.db.get_setting("card_sbp", "") or "").strip()
+    await rt.db.add_pay_card(bank, number, holder, sbp)
+    log.info("Migrated legacy card credentials to pay_cards table")
+
+
+async def smart_amount(rt: Runtime, base: float) -> float | None:
+    """Персональная пометка: base + случайные копейки, уникальные среди pending."""
+    import random
+
+    for _ in range(60):
+        val = round(base + random.randint(1, 99) / 100.0, 2)
+        if not await rt.db.smart_amount_taken(val):
+            return val
+    return None  # не смогли подобрать — вернём базовую цену
+
+
 # ──────────────────────── системный канал ────────────────────────
 
 

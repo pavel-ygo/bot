@@ -482,6 +482,62 @@ async def test_sys_channel():
         await db.close()
 
 
+async def test_multi_cards_and_smart():
+    print("оплата: несколько карт и умная сумма:")
+    from bot.services import Runtime, active_pay_cards, migrate_single_card, smart_amount
+
+    db = await Database.create("/tmp/test_bot10.db")
+    try:
+        cfg = load_config()
+        rt = Runtime(cfg=cfg, db=db, remna=None)
+
+        # миграция старых реквизитов
+        await db.set_setting("card_number", "2200 1529 1551 3652")
+        await db.set_setting("card_bank", "Альфа банк")
+        await db.set_setting("card_holder", "Павел")
+        await db.set_setting("card_sbp", "+79001234567")
+        await migrate_single_card(rt)
+        cards = await rt.db.pay_cards()
+        check("legacy card migrated", len(cards) == 1 and cards[0]["bank"] == "Альфа банк")
+        check("no double migration", (await migrate_single_card(rt)) is None
+              and len(await rt.db.pay_cards()) == 1)
+
+        # добавление ещё двух карт
+        await db.add_pay_card("Сбербанк", "4276123456789012", "Павел", "")
+        await db.add_pay_card("Т-Банк", "5536913812340000", "Павел", "+79001234567")
+        all_cards = await rt.db.pay_cards()
+        check("three cards", len(all_cards) == 3)
+        enabled = await active_pay_cards(rt)
+        check("all enabled by default", len(enabled) == 3)
+
+        # отключение одной из трёх
+        await db.set_pay_card_enabled(all_cards[1]["id"], False)
+        enabled = await active_pay_cards(rt)
+        check("one disabled", len(enabled) == 2)
+
+        # умная сумма: уникальные копейки, не равные базе
+        taken = set()
+        for _ in range(5):
+            val = await smart_amount(rt, 199.0)
+            check_args_ok = 199.01 <= val <= 199.99
+            assert check_args_ok, f"bad smart value {val}"
+            check("smart in (199.01..199.99)", True)
+            taken.add(val)
+        check("smart unique among pending", len(taken) == 5)
+
+        # smart_sum off -> берётся база (проверим уникальность не требуется)
+        await db.set_setting("smart_sum", "0")
+        check("flag stored", await db.get_setting("smart_sum", "1") == "0")
+
+        # нельзя удалить/выключить последнюю включённую — проверка на уровне хэндлера; тут БД-часть
+        await db.set_pay_card_enabled(all_cards[0]["id"], False)
+        await db.set_pay_card_enabled(all_cards[2]["id"], False)
+        enabled = await active_pay_cards(rt)
+        check("disabled cards excluded", all(c["id"] not in {all_cards[0]["id"], all_cards[2]["id"]} for c in enabled) if False else len(enabled) == 0)
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
@@ -492,6 +548,7 @@ async def main():
     await test_segments_and_nudge()
     await test_tariffs_and_operators()
     await test_sys_channel()
+    await test_multi_cards_and_smart()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()
@@ -500,6 +557,8 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 
 

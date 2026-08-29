@@ -13,9 +13,11 @@ from aiogram.types import (
 )
 
 from .. import texts
-from ..keyboards import card_pay_menu, pay_link_menu, pay_methods_menu, tariffs_menu
+from ..keyboards import (card_pay_menu, card_select_menu, pay_link_menu,
+                         pay_methods_menu, tariffs_menu)
 from ..payments import ProviderError
-from ..services import Runtime, card_settings, complete_payment
+from ..services import (Runtime, active_pay_cards, complete_payment,
+                         smart_amount)
 
 router = Router(name="buy")
 log = logging.getLogger(__name__)
@@ -76,20 +78,18 @@ async def cb_pay(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot)
         if not tariff.price_rub:
             await query.answer("Оплата переводом недоступна для тарифа", show_alert=True)
             return
-        cs = await card_settings(rt)
-        if not cs["number"]:
-            await query.answer("Реквизиты не настроены, выберите другой способ", show_alert=True)
+        cards = await active_pay_cards(rt)
+        if not cards:
+            await query.answer("Реквизиты не настроены, выберите другой способ",
+                               show_alert=True)
             return
-        payment_id = await rt.db.add_payment(
-            tg_id, tariff.id, "card", f"{tariff.price_rub:.2f}", "RUB"
-        )
-        from .pay_card import CardPayStates, _card_text
-
-        await state.set_state(CardPayStates.waiting_receipt)
-        await state.update_data(pid=payment_id)
+        if len(cards) == 1:
+            await _issue_card_payment(rt, query, state, tariff, cards[0])
+            await query.answer()
+            return
+        await state.update_data(pick_tariff=tariff.id)
         await query.message.edit_text(
-            await _card_text(rt, tariff, tariff.price_rub),
-            reply_markup=card_pay_menu(payment_id),
+            texts.CARD_SELECT, reply_markup=card_select_menu(cards)
         )
         await query.answer()
 
@@ -248,3 +248,53 @@ async def cb_cancel_invoice(query: CallbackQuery, rt: Runtime):
         return
     await query.message.edit_text(texts.PAYMENT_CANCELED)
     await query.answer()
+
+
+# ─────────────────── выдача счёта на карту ───────────────────
+
+
+async def _issue_card_payment(rt: Runtime, query: CallbackQuery,
+                              state: FSMContext, tariff, card: dict) -> None:
+    from .pay_card import CardPayStates, _card_text
+
+    tg_id = query.from_user.id
+    base = tariff.price_rub or 0.0
+    smart_on = await rt.db.get_setting("smart_sum", "1") == "1"
+    value = await smart_amount(rt, base) if smart_on else base
+    if value is None:
+        value = base
+    payment_id = await rt.db.add_payment(
+        tg_id, tariff.id, "card", f"{base:.2f}", "RUB"
+    )
+    await rt.db._db.execute(
+        "UPDATE payments SET smart_amount = ?, card_id = ? WHERE id = ?",
+        (value, card["id"], payment_id),
+    )
+    await rt.db._db.commit()
+    await state.set_state(CardPayStates.waiting_receipt)
+    await state.update_data(pid=payment_id)
+    await query.message.edit_text(
+        await _card_text(rt, tariff, card, value),
+        reply_markup=card_pay_menu(payment_id),
+    )
+
+
+@router.callback_query(F.data.startswith("pc:pick:"))
+async def cb_pick_card(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot):
+    raw = query.data.rsplit(":", 1)[1]
+    if not raw.isdigit():
+        await query.answer()
+        return
+    card = await rt.db.get_pay_card(int(raw))
+    if not card or not card["enabled"]:
+        await query.answer("Карта недоступна, выберите другую", show_alert=True)
+        return
+    data = await state.get_data()
+    tariff_id = data.get("pick_tariff")
+    tariff = rt.cfg.tariffs.get(tariff_id) if tariff_id else None
+    if tariff is None:
+        await query.answer("Сессия оплаты истекла — выберите тариф заново",
+                           show_alert=True)
+        return
+    await query.answer()
+    await _issue_card_payment(rt, query, state, tariff, card)
