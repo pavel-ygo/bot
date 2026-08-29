@@ -291,10 +291,22 @@ def card_receipt_admin_menu(payment_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def admin_card_menu(enabled: bool, has_card: bool) -> InlineKeyboardMarkup:
+def card_receipt_auto_menu(payment_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="✅ Деньги пришли", callback_data=f"pc:verify:{payment_id}")],
+        [InlineKeyboardButton(text="🚫 Не оплатил — отключить", callback_data=f"pc:revoke:{payment_id}")],
+    ])
+
+
+def admin_card_menu(enabled: bool, has_card: bool, auto: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(
             text="⛔️ Выключить" if enabled else "✅ Включить", callback_data="adm:card:toggle",
+        )],
+        [InlineKeyboardButton(
+            text="⚙️ Автоподтверждение чеков: вкл" if auto
+            else "⚙️ Автоподтверждение чеков: выкл",
+            callback_data="adm:card:auto",
         )],
         [InlineKeyboardButton(text="💳 Номер карты", callback_data="adm:card:num")],
         [

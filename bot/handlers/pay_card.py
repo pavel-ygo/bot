@@ -10,7 +10,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from .. import texts
-from ..keyboards import admin_back, admin_card_menu, card_pay_menu, card_receipt_admin_menu
+from ..keyboards import (admin_back, admin_card_menu, card_pay_menu,
+                         card_receipt_admin_menu, card_receipt_auto_menu)
 from ..services import Runtime, card_settings, complete_payment
 
 router = Router(name="pay-card")
@@ -89,20 +90,47 @@ async def card_receipt(message: Message, state: FSMContext, rt: Runtime, bot: Bo
     tariff = rt.cfg.tariffs.get(payment["tariff_id"])
     bot_user = await rt.db.get_bot_user(message.from_user.id) or {}
     name = bot_user.get("first_name") or bot_user.get("username") or str(message.from_user.id)
+    admin_info = texts.CARD_TO_ADMIN.format(
+        pid=pid,
+        title=tariff.title if tariff else payment["tariff_id"],
+        days=tariff.days if tariff else "?",
+        amount=f"{float(payment['amount']):g} ₽",
+        uid=message.from_user.id, name=name,
+    )
+
+    auto = await rt.db.get_setting("auto_approve_receipts", "0") == "1"
+    if auto:
+        # ── доверительный режим: выдаём подписку сразу, админ проверяет постфактум ──
+        if not await rt.db.claim_payment(pid, "paid"):
+            await message.answer(texts.CARD_ALREADY_DONE)
+            return
+        await complete_payment(
+            rt, bot, message.from_user.id, payment,
+            success_prefix="💳 Чек получен — доступ открыт!",
+        )
+        for admin_id in rt.cfg.admin_ids:
+            try:
+                await bot.copy_message(admin_id, message.chat.id, message.message_id)
+                await bot.send_message(
+                    admin_id,
+                    texts.CARD_AUTO_TO_ADMIN.format(
+                        pid=pid,
+                        title=tariff.title if tariff else payment["tariff_id"],
+                        days=tariff.days if tariff else "?",
+                        amount=f"{float(payment['amount']):g} ₽",
+                        uid=message.from_user.id, name=name,
+                    ),
+                    reply_markup=card_receipt_auto_menu(pid),
+                )
+            except Exception as e:
+                log.warning("auto receipt to admin %s: %s", admin_id, e)
+        return
+
     for admin_id in rt.cfg.admin_ids:
         try:
             await bot.copy_message(admin_id, message.chat.id, message.message_id)
-            await bot.send_message(
-                admin_id,
-                texts.CARD_TO_ADMIN.format(
-                    pid=pid,
-                    title=tariff.title if tariff else payment["tariff_id"],
-                    days=tariff.days if tariff else "?",
-                    amount=f"{float(payment['amount']):g} ₽",
-                    uid=message.from_user.id, name=name,
-                ),
-                reply_markup=card_receipt_admin_menu(pid),
-            )
+            await bot.send_message(admin_id, admin_info,
+                                   reply_markup=card_receipt_admin_menu(pid))
         except Exception as e:
             log.warning("card receipt to admin %s: %s", admin_id, e)
 
@@ -170,20 +198,73 @@ async def cb_reject(query: CallbackQuery, rt: Runtime, bot: Bot):
         pass
 
 
+@router.callback_query(F.data.startswith("pc:verify:"))
+async def cb_auto_verify(query: CallbackQuery, rt: Runtime, bot: Bot):
+    """Админ подтвердил, что деньги реально поступили (пост-проверка авто-режима)."""
+    if not _is_admin(rt, query.from_user.id):
+        return
+    pid = int(query.data.rsplit(":", 1)[1])
+    payment = await rt.db.get_payment(pid)
+    if not payment:
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    await rt.db.set_payment_verified(pid)
+    await query.answer(texts.CARD_VERIFIED_OK, show_alert=True)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    log.info("payment #%s verified by admin", pid)
+
+
+@router.callback_query(F.data.startswith("pc:revoke:"))
+async def cb_auto_revoke(query: CallbackQuery, rt: Runtime, bot: Bot):
+    """Деньги не пришли — отключаем подписку пользователю."""
+    if not _is_admin(rt, query.from_user.id):
+        return
+    pid = int(query.data.rsplit(":", 1)[1])
+    payment = await rt.db.get_payment(pid)
+    if not payment:
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    tg_id = int(payment["tg_id"])
+    try:
+        rw_user = await rt.remna.get_user_by_telegram_id(tg_id)
+        if rw_user:
+            await rt.remna.disable_user(rw_user["uuid"])
+    except Exception as e:
+        log.error("revoke subscription for %s: %s", tg_id, e)
+        await query.answer(f"Ошибка отключения: {e}", show_alert=True)
+        return
+    await rt.db.set_payment_note(pid, "auto-approved but NOT PAID — revoked")
+    await query.answer(texts.CARD_REVOKED_ADMIN, show_alert=True)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    try:
+        await bot.send_message(tg_id, texts.CARD_REVOKED_USER.format(pid=pid))
+    except Exception:
+        pass
+
+
 # ══════════════════════════ админ: настройки реквизитов ══════════════════════════
 
 
 async def _card_admin_text_and_kb(rt: Runtime):
     cs = await card_settings(rt)
     enabled = await rt.db.get_setting("pay_card", "1") == "1"
+    auto = await rt.db.get_setting("auto_approve_receipts", "0") == "1"
     text = texts.ADMIN_CARD_SETTINGS.format(
         status=texts.ADMIN_CARD_ON if enabled else texts.ADMIN_CARD_OFF,
         card=cs["number"] or texts.ADMIN_CARD_NOT_SET,
         bank=cs["bank"] or texts.ADMIN_CARD_NOT_SET,
         holder=cs["holder"] or texts.ADMIN_CARD_NOT_SET,
         sbp=cs["sbp"] or texts.ADMIN_CARD_NOT_SET,
+        auto=texts.ADMIN_CARD_AUTO_ON if auto else texts.ADMIN_CARD_AUTO_OFF,
+        auto_hint=texts.ADMIN_CARD_AUTO_HINT_ON if auto else texts.ADMIN_CARD_AUTO_HINT_OFF,
     )
-    return text, admin_card_menu(enabled, bool(cs["number"]))
+    return text, admin_card_menu(enabled, bool(cs["number"]), auto)
 
 
 @router.callback_query(F.data == "adm:card")
@@ -201,6 +282,17 @@ async def cb_card_toggle(query: CallbackQuery, rt: Runtime):
         return
     current = await rt.db.get_setting("pay_card", "1") == "1"
     await rt.db.set_setting("pay_card", "0" if current else "1")
+    text, kb = await _card_admin_text_and_kb(rt)
+    await query.message.edit_text(text, reply_markup=kb)
+    await query.answer("Сохранено")
+
+
+@router.callback_query(F.data == "adm:card:auto")
+async def cb_card_auto(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    current = await rt.db.get_setting("auto_approve_receipts", "0") == "1"
+    await rt.db.set_setting("auto_approve_receipts", "0" if current else "1")
     text, kb = await _card_admin_text_and_kb(rt)
     await query.message.edit_text(text, reply_markup=kb)
     await query.answer("Сохранено")

@@ -129,6 +129,10 @@ class Database:
             await self._db.execute("ALTER TABLE payments ADD COLUMN source TEXT")
         if not await has_col("bot_users", "referred_by"):
             await self._db.execute("ALTER TABLE bot_users ADD COLUMN referred_by TEXT")
+        if not await has_col("payments", "verified"):
+            await self._db.execute(
+                "ALTER TABLE payments ADD COLUMN verified INTEGER NOT NULL DEFAULT 0"
+            )
 
     # ── пользователи бота ──────────────────────────────────────────────
 
@@ -400,6 +404,18 @@ class Database:
             "UPDATE payments SET status = 'delivered', delivered_at = ? "
             "WHERE id = ? AND status IN ('paid','pending')",
             (utcnow().isoformat(), payment_id),
+        )
+        await self._db.commit()
+
+    async def set_payment_verified(self, payment_id: int) -> None:
+        await self._db.execute(
+            "UPDATE payments SET verified = 1 WHERE id = ?", (payment_id,)
+        )
+        await self._db.commit()
+
+    async def set_payment_note(self, payment_id: int, note: str) -> None:
+        await self._db.execute(
+            "UPDATE payments SET note = ? WHERE id = ?", (note[:500], payment_id)
         )
         await self._db.commit()
 
