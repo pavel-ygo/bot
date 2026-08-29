@@ -185,15 +185,17 @@ class RemnawaveClient:
     # ── ссылка на подписку ─────────────────────────────────────────────
 
     def build_sub_url(self, user: dict) -> str:
+        # SUB_PAGE_DOMAIN задан явно — строим ссылку сами (приоритет над панелью):
+        # полезно, когда поднята страница подписок и хочется красивые ссылки
+        short = user.get("shortUuid") or user.get("short_uuid")
+        if self._sub_domain and short:
+            return f"{self._sub_domain}/{short}"
         url = user.get("subscriptionUrl")
         if url:
             return str(url).strip()
-        short = user.get("shortUuid") or user.get("short_uuid")
-        if short and self._sub_domain:
-            return f"{self._sub_domain}/{short}"
         raise RemnaError(
             "Не удалось получить ссылку на подписку: "
-            "задайте SUB_PAGE_DOMAIN в .env или включите subscriptionUrl на стороне панели."
+            "задайте SUB_PAGE_DOMAIN в .env или настройте subscription page в панели."
         )
 
     async def health(self) -> dict:

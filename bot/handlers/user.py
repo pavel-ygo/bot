@@ -129,6 +129,11 @@ async def cb_my_sub(query: CallbackQuery, rt: Runtime):
         url = rt.remna.build_sub_url(rw_user)
     except RemnaError:
         url = None
+    if url:
+        text += (
+            f"\n\n🔗 <b>Ссылка для приложений</b> (нажмите, чтобы скопировать):\n"
+            f"<code>{url}</code>"
+        )
     expired = False
     from ..utils import parse_iso, utcnow
 
