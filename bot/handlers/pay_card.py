@@ -268,9 +268,10 @@ async def _card_admin_text_and_kb(rt: Runtime):
 
 
 @router.callback_query(F.data == "adm:card")
-async def cb_card_menu(query: CallbackQuery, rt: Runtime):
+async def cb_card_menu(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
+    await state.clear()  # сбросить зависший ввод, если был
     text, kb = await _card_admin_text_and_kb(rt)
     await query.message.edit_text(text, reply_markup=kb)
     await query.answer()
@@ -309,49 +310,33 @@ async def cb_card_del(query: CallbackQuery, rt: Runtime):
     await query.answer(texts.ADMIN_CARD_CLEARED, show_alert=True)
 
 
+FIELD_TO_STATE = {
+    "num": "number",
+    "bank": "bank",
+    "holder": "holder",
+    "sbp": "sbp",
+}
+
+
 @router.callback_query(F.data.startswith("adm:card:set:"))
 async def cb_card_set(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
     field = query.data.rsplit(":", 1)[1]
+    if field not in FIELD_TO_STATE:
+        await query.answer("Неизвестное поле", show_alert=True)
+        return
     prompts = {
         "num": texts.ADMIN_CARD_ASK_NUM,
         "bank": texts.ADMIN_CARD_ASK_BANK,
         "holder": texts.ADMIN_CARD_ASK_HOLDER,
+        "sbp": texts.ADMIN_CARD_ASK_SBP,
     }
-    if field not in prompts:
-        await query.answer()
-        return
-    await state.set_state(getattr(CardSettingsStates, {"num": "number", "bank": "bank",
-                                                       "holder": "holder"}[field]))
-    await state.update_data(field=field)
-    await query.message.answer(prompts[field])
+    await state.set_state(getattr(CardSettingsStates, FIELD_TO_STATE[field]))
+    await query.message.answer(
+        prompts[field], reply_markup=admin_back()
+    )
     await query.answer()
-
-
-# короткие алиасы для кнопок клавиатуры
-@router.callback_query(F.data == "adm:card:num")
-async def cb_card_num(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    query.data = "adm:card:set:num"
-    await cb_card_set(query, state, rt)
-
-
-@router.callback_query(F.data == "adm:card:bank")
-async def cb_card_bank(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    query.data = "adm:card:set:bank"
-    await cb_card_set(query, state, rt)
-
-
-@router.callback_query(F.data == "adm:card:holder")
-async def cb_card_holder(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    query.data = "adm:card:set:holder"
-    await cb_card_set(query, state, rt)
-
-
-@router.callback_query(F.data == "adm:card:sbp")
-async def cb_card_sbp(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    query.data = "adm:card:set:sbp"
-    await cb_card_set(query, state, rt)
 
 
 @router.message(CardSettingsStates.number)
@@ -359,14 +344,22 @@ async def card_num_input(message: Message, state: FSMContext, rt: Runtime):
     value = (message.text or "").strip()
     await state.clear()
     if value.lower() == "/cancel":
-        return await message.answer("Отменено.")
-    digits = value.replace(" ", "")
-    if not digits.isdigit() or not (12 <= len(digits) <= 20):
-        await message.answer("Похоже, это не номер карты. Пришлите 12–20 цифр:")
+        return await message.answer("Отменено.", reply_markup=admin_back())
+    # выкидываем ВСЁ, кроме цифр: пробелы, дефисы, неразрывные пробелы при копипасте
+    digits = re.sub(r"\D", "", value)
+    if not (12 <= len(digits) <= 20):
+        await message.answer(
+            "Похоже, это не номер карты — нужно 12–20 цифр.\n"
+            "Можно с пробелами или дефисами, например: 2200 1234 5678 9010",
+        )
         await state.set_state(CardSettingsStates.number)
         return
-    await rt.db.set_setting("card_number", value)
-    await message.answer(texts.ADMIN_CARD_SET_OK, reply_markup=admin_back())
+    formatted = " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
+    await rt.db.set_setting("card_number", formatted)
+    await message.answer(
+        texts.ADMIN_CARD_SET_OK + f"\n💳 <code>{formatted}</code>",
+        reply_markup=admin_back(),
+    )
 
 
 @router.message(CardSettingsStates.bank)

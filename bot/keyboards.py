@@ -308,12 +308,12 @@ def admin_card_menu(enabled: bool, has_card: bool, auto: bool = False) -> Inline
             else "⚙️ Автоподтверждение чеков: выкл",
             callback_data="adm:card:auto",
         )],
-        [InlineKeyboardButton(text="💳 Номер карты", callback_data="adm:card:num")],
+        [InlineKeyboardButton(text="💳 Номер карты", callback_data="adm:card:set:num")],
         [
-            InlineKeyboardButton(text="🏦 Банк", callback_data="adm:card:bank"),
-            InlineKeyboardButton(text="👤 Получатель", callback_data="adm:card:holder"),
+            InlineKeyboardButton(text="🏦 Банк", callback_data="adm:card:set:bank"),
+            InlineKeyboardButton(text="👤 Получатель", callback_data="adm:card:set:holder"),
         ],
-        [InlineKeyboardButton(text="📲 СБП (телефон)", callback_data="adm:card:sbp")],
+        [InlineKeyboardButton(text="📲 СБП (телефон)", callback_data="adm:card:set:sbp")],
     ]
     if has_card:
         rows.append([InlineKeyboardButton(text="🗑 Удалить реквизиты", callback_data="adm:card:del")])

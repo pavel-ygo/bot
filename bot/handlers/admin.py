@@ -40,10 +40,11 @@ async def cmd_admin(message: Message, rt: Runtime):
 
 
 @router.callback_query(F.data == "adm:main")
-async def cb_admin(query: CallbackQuery, rt: Runtime):
+async def cb_admin(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         await query.answer("⛔️ Только для администраторов", show_alert=True)
         return
+    await state.clear()  # выходим из любого режима ввода
     await query.message.edit_text(texts.ADMIN_MENU, reply_markup=admin_menu())
     await query.answer()
 
