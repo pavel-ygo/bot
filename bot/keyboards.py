@@ -319,3 +319,40 @@ def admin_card_menu(enabled: bool, has_card: bool, auto: bool = False) -> Inline
         rows.append([InlineKeyboardButton(text="🗑 Удалить реквизиты", callback_data="adm:card:del")])
     rows += admin_back().inline_keyboard
     return _kb(rows)
+
+
+# ── отклонение чека с причиной ────────────────────────────────────────
+
+
+def card_reject_reasons_menu(payment_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="💸 Неверная сумма", callback_data=f"pc:no2:{payment_id}:sum")],
+        [InlineKeyboardButton(text="🖼 Чек не читается / не тот",
+                              callback_data=f"pc:no2:{payment_id}:unreadable")],
+        [InlineKeyboardButton(text="🔍 Платёж не найден", callback_data=f"pc:no2:{payment_id}:notfound")],
+        [InlineKeyboardButton(text="✍️ Своя причина…", callback_data=f"pc:no2:{payment_id}:custom")],
+    ])
+
+
+# ── напоминание о брошенной оплате ────────────────────────────────────
+
+
+def payment_nudge_menu(payment_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="💳 Показать реквизиты", callback_data=f"pc:show:{payment_id}")],
+        [InlineKeyboardButton(text="❌ Не планирую платить", callback_data=f"cxl:{payment_id}")],
+    ])
+
+
+# ── сегменты рассылки ─────────────────────────────────────────────────
+
+
+def broadcast_audience_menu() -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="👥 Все пользователи", callback_data="adm:bc:aud:all")],
+        [InlineKeyboardButton(text="⏳ Подписка истекает (≤3 дн.)", callback_data="adm:bc:aud:expiring")],
+        [InlineKeyboardButton(text="🛑 Без активной подписки", callback_data="adm:bc:aud:no_sub")],
+        [InlineKeyboardButton(text="❌ Ни одной оплаты", callback_data="adm:bc:aud:never_paid")],
+        [InlineKeyboardButton(text="💳 Платили хотя бы раз", callback_data="adm:bc:aud:paid")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="adm:cancel")],
+    ])

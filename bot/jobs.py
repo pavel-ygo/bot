@@ -8,9 +8,11 @@ from pathlib import Path
 
 from aiogram import Bot
 
+from .keyboards import payment_nudge_menu
 from .payments import ProviderError
 from .services import Runtime, check_reminders, complete_payment
 from .handlers.buy import _check_external
+from .texts import NUDGE_USER
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ POLL_INTERVAL = 20          # сек между опросами платеже�
 REMINDER_INTERVAL = 6 * 3600  # как часто проверять сроки подписок
 BACKUP_INTERVAL = 24 * 3600   # раз в сутки
 BACKUP_KEEP = 7               # сколько копий хранить
+NUDGE_AFTER_MINUTES = 60      # напомнить о брошенной оплате через час
 
 
 async def payment_poller(rt: Runtime, bot: Bot) -> None:
@@ -39,6 +42,25 @@ async def payment_poller(rt: Runtime, bot: Bot) -> None:
             expired = await rt.db.expire_stale(hours=24)
             if expired:
                 log.info("Expired %s stale invoices", expired)
+
+            # напоминания о брошенных оплатах (раз, потом не дублируем)
+            stale = await rt.db.stale_pending_payments(minutes=NUDGE_AFTER_MINUTES)
+            for payment in stale:
+                await rt.db.set_payment_nudge(payment["id"])
+                if payment["provider"] != "card":
+                    continue
+                tariff = rt.cfg.tariffs.get(payment["tariff_id"])
+                if tariff is None:
+                    continue
+                amount = f"{float(payment['amount']):g} ₽"
+                try:
+                    await bot.send_message(
+                        int(payment["tg_id"]),
+                        NUDGE_USER.format(title=tariff.title, amount=amount),
+                        reply_markup=payment_nudge_menu(payment["id"]),
+                    )
+                except Exception:
+                    continue
         except ProviderError as e:
             log.warning("poller provider error: %s", e)
         except Exception:

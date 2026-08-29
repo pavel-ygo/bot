@@ -327,7 +327,6 @@ async def test_tickets_and_refs():
 
 async def test_card_provider():
     print("оплата: способы и дефолты (карта вкл, stars/крипта выкл):")
-    from bot.config import Tariff
     from bot.services import Runtime, card_settings
 
     db = await Database.create("/tmp/test_bot5.db")
@@ -364,6 +363,42 @@ async def test_card_provider():
         await db.close()
 
 
+async def test_segments_and_nudge():
+    print("db: сегменты рассылки и напоминания:")
+    db = await Database.create("/tmp/test_bot7.db")
+    try:
+        # сегменты оплат
+        await db.upsert_bot_user(2000, "a", "A")  # никогда не платил
+        await db.upsert_bot_user(2001, "b", "B")  # платил
+        await db.add_payment(2001, "m1", "card", "199", "RUB", status="delivered")
+        never = await db.tg_ids_never_paid()
+        paid = await db.tg_ids_paid()
+        check("never_paid segment", 2000 in never and 2001 not in never)
+        check("paid segment", 2001 in paid and 2000 not in paid)
+
+        # напоминания о брошенных оплатах
+        from datetime import timedelta
+
+        from bot.utils import utcnow
+
+        pid = await db.add_payment(2000, "m1", "card", "199", "RUB")
+        stale_now = await db.stale_pending_payments(minutes=60)
+        check("fresh payment not stale", all(p["id"] != pid for p in stale_now))
+        # «состарим» платёж вручную
+        await db._db.execute(
+            "UPDATE payments SET created_at = ? WHERE id = ?",
+            ((utcnow() - timedelta(minutes=90)).isoformat(), pid),
+        )
+        await db._db.commit()
+        stale_old = await db.stale_pending_payments(minutes=60)
+        check("old payment is stale", any(p["id"] == pid for p in stale_old))
+        await db.set_payment_nudge(pid)
+        check("nudge flag set",
+              all(p["id"] != pid for p in await db.stale_pending_payments(minutes=60)))
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
@@ -371,6 +406,7 @@ async def main():
     await test_promo_rules()
     await test_tickets_and_refs()
     await test_card_provider()
+    await test_segments_and_nudge()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()
@@ -379,5 +415,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 

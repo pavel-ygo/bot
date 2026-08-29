@@ -11,7 +11,8 @@ from aiogram.types import CallbackQuery, Message
 
 from .. import texts
 from ..keyboards import (admin_back, admin_card_menu, card_pay_menu,
-                         card_receipt_admin_menu, card_receipt_auto_menu)
+                         card_reject_reasons_menu, card_receipt_admin_menu,
+                         card_receipt_auto_menu)
 from ..services import Runtime, card_settings, complete_payment
 
 router = Router(name="pay-card")
@@ -22,6 +23,10 @@ RECEIPT_TYPES = {"photo", "document", "video", "text", "voice", "audio"}
 
 class CardPayStates(StatesGroup):
     waiting_receipt = State()
+
+
+class CardRejectStates(StatesGroup):
+    reason = State()
 
 
 class CardSettingsStates(StatesGroup):
@@ -198,7 +203,7 @@ async def cb_approve(query: CallbackQuery, rt: Runtime, bot: Bot):
 
 
 @router.callback_query(F.data.startswith("pc:no:"))
-async def cb_reject(query: CallbackQuery, rt: Runtime, bot: Bot):
+async def cb_reject(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
     pid = int(query.data.rsplit(":", 1)[1])
@@ -206,16 +211,96 @@ async def cb_reject(query: CallbackQuery, rt: Runtime, bot: Bot):
     if not payment or payment["status"] != "pending":
         await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
         return
+    await query.message.edit_reply_markup(
+        reply_markup=card_reject_reasons_menu(pid)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("pc:no2:"))
+async def cb_reject_with_reason(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    _, _, pid_raw, code = query.data.split(":")
+    pid = int(pid_raw)
+    payment = await rt.db.get_payment(pid)
+    if not payment or payment["status"] != "pending":
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    if code == "custom":
+        await state.set_state(CardRejectStates.reason)
+        await state.update_data(pid=pid)
+        await query.message.answer(texts.CARD_REJECT_CUSTOM_ASK)
+        await query.answer()
+        return
+    reason = texts.CARD_REJECT_REASONS.get(code, "—")
+    await _do_reject(rt, bot, query, payment, reason)
+
+
+@router.message(CardRejectStates.reason)
+async def reject_custom_reason(message: Message, state: FSMContext, rt: Runtime, bot: Bot):
+    reason = (message.text or "").strip()
+    data = await state.get_data()
+    await state.clear()
+    pid = data.get("pid")
+    payment = await rt.db.get_payment(pid) if pid else None
+    if not payment or payment["status"] != "pending":
+        await message.answer(texts.CARD_ALREADY_DONE)
+        return
+    if not reason or reason.startswith("/"):
+        await message.answer("Отменено.")
+        return
+    await _do_reject(rt, bot, message, payment, reason[:400], answer=False)
+
+
+async def _do_reject(rt: Runtime, bot: Bot, query_or_msg, payment: dict,
+                     reason: str, *, answer: bool = True):
+    pid = payment["id"]
     await rt.db.claim_payment(pid, "canceled")
-    await query.answer(texts.CARD_REJECTED_ADMIN, show_alert=True)
+    await rt.db.set_payment_note(pid, f"rejected: {reason[:200]}")
     try:
-        await query.message.edit_reply_markup(reply_markup=None)
+        await bot.send_message(
+            int(payment["tg_id"]),
+            texts.CARD_REJECT_USER.format(pid=pid, reason=reason),
+        )
     except Exception:
         pass
-    try:
-        await bot.send_message(int(payment["tg_id"]), texts.CARD_REJECTED.format(pid=pid))
-    except Exception:
-        pass
+    if isinstance(query_or_msg, CallbackQuery):
+        if answer:
+            await query_or_msg.answer(texts.CARD_REJECTED_ADMIN, show_alert=True)
+        try:
+            await query_or_msg.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        try:
+            await query_or_msg.message.answer(texts.CARD_REJECTED_ADMIN)
+        except Exception:
+            pass
+    else:
+        await query_or_msg.answer(texts.CARD_REJECTED_ADMIN, reply_markup=admin_back())
+
+
+# повторный показ реквизитов (из напоминания)
+@router.callback_query(F.data.startswith("pc:show:"))
+async def cb_show_details(query: CallbackQuery, rt: Runtime):
+    pid = int(query.data.rsplit(":", 1)[1])
+    payment = await rt.db.get_payment(pid)
+    if not payment or int(payment["tg_id"]) != query.from_user.id:
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    if payment["status"] != "pending":
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    tariff = rt.cfg.tariffs.get(payment["tariff_id"])
+    if tariff is None:
+        await query.answer(texts.CARD_ALREADY_DONE, show_alert=True)
+        return
+    amount = float(payment["amount"]) if payment["amount"] else (tariff.price_rub or 0)
+    await query.message.answer(
+        await _card_text(rt, tariff, amount),
+        reply_markup=card_pay_menu(pid),
+    )
+    await query.answer()
 
 
 @router.callback_query(F.data.startswith("pc:verify:"))

@@ -11,17 +11,19 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from .. import texts
-from ..keyboards import admin_back, admin_confirm_broadcast, admin_menu
+from ..keyboards import (admin_back, admin_confirm_broadcast, admin_menu,
+                         broadcast_audience_menu)
 from ..payments import ProviderError
 from ..remnawave import RemnaError
 from ..services import Runtime, deliver_subscription, subscription_kb
-from ..utils import fmt_date, parse_iso
+from ..utils import fmt_date, parse_iso, utcnow
 
 router = Router(name="admin")
 log = logging.getLogger(__name__)
 
 
 class AdminStates(StatesGroup):
+    broadcast_audience = State()
     broadcast_message = State()
     grant_target = State()
     grant_days = State()
@@ -183,24 +185,89 @@ async def cb_check_panel(query: CallbackQuery, rt: Runtime):
     )
 
 
-# ─────────────────────────── рассылка ───────────────────────────
+# ─────────────────────────── рассылка по сегментам ───────────────────────────
+
+AUDIENCE_LABELS = {
+    "all": "все пользователи",
+    "expiring": "подписка истекает ≤3 дн.",
+    "no_sub": "без активной подписки",
+    "never_paid": "ни одной оплаты",
+    "paid": "платили хотя бы раз",
+}
+
+
+async def _broadcast_targets(rt: Runtime, key: str) -> list[int]:
+    """Список tg_id выбранного сегмента."""
+    if key == "all":
+        return await rt.db.all_bot_users()
+    if key == "never_paid":
+        return await rt.db.tg_ids_never_paid()
+    if key == "paid":
+        return await rt.db.tg_ids_paid()
+
+    # сегменты по данным панели
+    bot_users = set(await rt.db.all_bot_users())
+    panel_ids: set[int] = set()
+    expiring: list[int] = []
+    now = utcnow()
+    async for u in rt.remna.iter_users():
+        raw = u.get("telegramId")
+        if not raw:
+            continue
+        try:
+            tg = int(raw)
+        except (TypeError, ValueError):
+            continue
+        panel_ids.add(tg)
+        if str(u.get("status", "")).upper() == "ACTIVE":
+            expire = parse_iso(u.get("expireAt"))
+            if expire and (expire - now).total_seconds() <= 3 * 86400:
+                expiring.append(tg)
+    if key == "expiring":
+        return [t for t in expiring if t in bot_users]
+    if key == "no_sub":
+        return sorted(bot_users - panel_ids)
+    return []
 
 
 @router.callback_query(F.data == "adm:bcast")
 async def cb_broadcast(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
+    await state.set_state(AdminStates.broadcast_audience)
+    await query.message.edit_text(
+        texts.ADMIN_BCAST_AUDIENCE + "\n\n" + texts.ADMIN_BCAST_NOTE_PANEL,
+        reply_markup=broadcast_audience_menu(),
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("adm:bc:aud:"))
+async def cb_broadcast_audience(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    key = query.data.rsplit(":", 1)[1]
+    if key not in AUDIENCE_LABELS:
+        await query.answer()
+        return
+    await state.update_data(audience=key)
     await state.set_state(AdminStates.broadcast_message)
-    await query.message.edit_text(texts.ADMIN_BROADCAST_ASK)
+    await query.message.edit_text(
+        f"📢 <b>Рассылка для: {AUDIENCE_LABELS[key]}</b>\n\n" + texts.ADMIN_BROADCAST_ASK
+    )
     await query.answer()
 
 
 @router.message(AdminStates.broadcast_message)
 async def broadcast_preview(message: Message, state: FSMContext, rt: Runtime):
     await state.update_data(chat_id=message.chat.id, message_id=message.message_id)
-    users = await rt.db.all_bot_users()
+    data = await state.get_data()
+    key = data.get("audience", "all")
+    targets = await _broadcast_targets(rt, key)
     await message.answer(
-        texts.ADMIN_BROADCAST_PREVIEW.format(count=len(users)),
+        texts.ADMIN_BCAST_PREVIEW_SEG.format(
+            audience=AUDIENCE_LABELS.get(key, key), count=len(targets),
+        ),
         reply_markup=admin_confirm_broadcast(),
     )
 
@@ -215,9 +282,9 @@ async def broadcast_go(query: CallbackQuery, state: FSMContext, rt: Runtime, bot
         await query.answer("Сначала пришлите сообщение", show_alert=True)
         return
     await query.answer("Отправляю…")
-    users = await rt.db.all_bot_users()
+    targets = await _broadcast_targets(rt, data.get("audience", "all"))
     sent = failed = 0
-    for tg_id in users:
+    for tg_id in targets:
         try:
             await bot.copy_message(tg_id, data["chat_id"], data["message_id"])
             sent += 1

@@ -129,6 +129,10 @@ class Database:
             await self._db.execute("ALTER TABLE payments ADD COLUMN source TEXT")
         if not await has_col("bot_users", "referred_by"):
             await self._db.execute("ALTER TABLE bot_users ADD COLUMN referred_by TEXT")
+        if not await has_col("payments", "nudge_sent"):
+            await self._db.execute(
+                "ALTER TABLE payments ADD COLUMN nudge_sent INTEGER NOT NULL DEFAULT 0"
+            )
         if not await has_col("payments", "verified"):
             await self._db.execute(
                 "ALTER TABLE payments ADD COLUMN verified INTEGER NOT NULL DEFAULT 0"
@@ -434,6 +438,22 @@ class Database:
             row = await cur.fetchone()
             return dict(row) if row else None
 
+    async def set_payment_nudge(self, payment_id: int) -> None:
+        await self._db.execute(
+            "UPDATE payments SET nudge_sent = 1 WHERE id = ?", (payment_id,)
+        )
+        await self._db.commit()
+
+    async def stale_pending_payments(self, minutes: int, limit: int = 20) -> list[dict]:
+        """Pending-оплаты старше N минут, по которым ещё не отправляли напоминание."""
+        cutoff = (utcnow() - timedelta(minutes=minutes)).isoformat()
+        async with self._db.execute(
+            "SELECT * FROM payments WHERE status = 'pending' AND nudge_sent = 0 "
+            "AND created_at < ? ORDER BY id DESC LIMIT ?",
+            (cutoff, limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def pending_payments(self, provider: str | None = None) -> list[dict]:
         query = "SELECT * FROM payments WHERE status = 'pending'"
         params: tuple = ()
@@ -495,6 +515,28 @@ class Database:
             (referrer_tg_id,),
         ) as cur:
             return (await cur.fetchone())[0]
+
+    async def tg_ids_never_paid(self) -> list[int]:
+        async with self._db.execute(
+            """
+            SELECT tg_id FROM bot_users WHERE tg_id NOT IN (
+                SELECT DISTINCT tg_id FROM payments
+                WHERE status IN ('paid','delivered')
+                  AND provider IN ('stars','cryptobot','yookassa','card')
+            )
+            """
+        ) as cur:
+            return [r[0] for r in await cur.fetchall()]
+
+    async def tg_ids_paid(self) -> list[int]:
+        async with self._db.execute(
+            """
+            SELECT DISTINCT tg_id FROM payments
+            WHERE status IN ('paid','delivered')
+              AND provider IN ('stars','cryptobot','yookassa','card')
+            """
+        ) as cur:
+            return [r[0] for r in await cur.fetchall()]
 
     async def referrals_total(self) -> int:
         async with self._db.execute(
