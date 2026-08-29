@@ -30,6 +30,27 @@ class Runtime:
     _squad_uuid: str | None = None
     extra: dict = field(default_factory=dict)
 
+    async def unavailable_reasons(self, tariff: Tariff) -> list[str]:
+        """Почему способы оплаты недоступны (для подсказки администратору)."""
+        from . import texts
+
+        reasons: list[str] = []
+        card_set = bool(await self.db.get_setting("card_number", ""))
+        card_on = await self.db.get_setting("pay_card", "1") == "1"
+        if not card_set:
+            reasons.append(texts.PAY_NO_CARD)
+        elif not card_on:
+            reasons.append(texts.PAY_CARD_OFF)
+        if not tariff.price_rub:
+            reasons.append(texts.PAY_NO_PRICE)
+        if not (bool(tariff.price_stars) and self.cfg.stars_enabled):
+            reasons.append(texts.PAY_STARS_OFF)
+        if not (self.cryptobot and tariff.price_usdt):
+            reasons.append(texts.PAY_CRYPTO_OFF)
+        if not (self.yookassa and tariff.price_rub):
+            reasons.append(texts.PAY_YK_OFF)
+        return reasons
+
     async def available_providers(self, tariff: Tariff) -> dict[str, bool]:
         """Способы оплаты: сконфигурированы И включены в админке.
 

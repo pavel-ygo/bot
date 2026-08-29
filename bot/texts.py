@@ -109,11 +109,15 @@ REMINDER_EXPIRED = (
 )
 
 PAYMENTS_NOTHING = (
-    "Счётов пока нет. Методы оплаты, которые можно включить:\n"
-    "• <b>Telegram Stars</b> — задаётся price_stars в TARIFFS\n"
-    "• <b>CryptoBot</b> — нужен CRYPTOBOT_TOKEN и price_usdt\n"
-    "• <b>ЮKassa</b> — нужны YOOKASSA_SHOP_ID/YOOKASSA_SECRET и price_rub"
+    "😕 <b>Способы оплаты пока не настроены.</b>\n\n{reasons}\n"
+    "Обратитесь к администратору."
 )
+PAY_NO_CARD = "• Перевод на карту: реквизиты не заданы (админка → 🏦 Оплата на карту)\n"
+PAY_CARD_OFF = "• Перевод на карту: способ выключен в админке\n"
+PAY_NO_PRICE = "• У тарифа не указана цена в рублях (price_rub в TARIFFS)\n"
+PAY_STARS_OFF = "• Telegram Stars: выключен в админке (💳 Способы оплаты)\n"
+PAY_CRYPTO_OFF = "• CryptoBot: выключен или не настроен\n"
+PAY_YK_OFF = "• ЮKassa: выключена или не настроена\n"
 
 # ── промокоды (пользователь) ───────────────────────────────────────────
 

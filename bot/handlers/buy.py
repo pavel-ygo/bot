@@ -37,7 +37,14 @@ async def cb_tariff(query: CallbackQuery, rt: Runtime):
         return
     providers = await rt.available_providers(tariff)
     if not any(providers.values()):
-        await query.message.edit_text(texts.PAYMENTS_NOTHING)
+        reasons = await rt.unavailable_reasons(tariff)
+        is_admin = query.from_user.id in rt.cfg.admin_ids
+        text = (
+            texts.PAYMENTS_NOTHING.format(reasons="".join(reasons))
+            if is_admin
+            else texts.PAYMENTS_NOTHING.format(reasons="")
+        )
+        await query.message.edit_text(text)
         await query.answer()
         return
     desc = f"{tariff.description}\n" if tariff.description else ""
