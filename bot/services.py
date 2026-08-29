@@ -31,10 +31,15 @@ class Runtime:
     extra: dict = field(default_factory=dict)
 
     async def available_providers(self, tariff: Tariff) -> dict[str, bool]:
+        """Способы оплаты: сконфигурированы в .env И включены в админке."""
+
+        async def on(name: str) -> bool:
+            return await self.db.get_setting(f"pay_{name}", "1") == "1"
+
         return {
-            "stars": bool(tariff.price_stars),
-            "cryptobot": bool(self.cryptobot and tariff.price_usdt),
-            "yookassa": bool(self.yookassa and tariff.price_rub),
+            "stars": bool(tariff.price_stars) and self.cfg.stars_enabled and await on("stars"),
+            "cryptobot": bool(self.cryptobot and tariff.price_usdt) and await on("cryptobot"),
+            "yookassa": bool(self.yookassa and tariff.price_rub) and await on("yookassa"),
         }
 
     async def squad_uuid(self) -> str:
@@ -226,6 +231,39 @@ async def check_reminders(rt: Runtime, bot: Bot) -> tuple[int, int]:
         except Exception:
             errors += 1
     return sent, errors
+
+
+# ──────────────────────────── пробный период ────────────────────────────
+
+
+async def trial_config(rt: Runtime) -> dict:
+    """Настройки пробного периода: из БД (админка) с фолбэком на .env."""
+    db = rt.db
+    channel = await db.get_setting("trial_channel", rt.cfg.trial_channel or "")
+    url = await db.get_setting("trial_channel_url", rt.cfg.trial_channel_url or "")
+    try:
+        days = int(await db.get_setting("trial_days", str(rt.cfg.trial_days)) or 1)
+    except ValueError:
+        days = rt.cfg.trial_days
+    enabled = (await db.get_setting("trial_enabled", "1")) == "1"
+    return {
+        "enabled": enabled,
+        "channel": channel.strip() or None,
+        "url": url.strip() or None,
+        "days": max(1, days),
+    }
+
+
+async def is_channel_member(bot: Bot, channel: str, user_id: int) -> bool | None:
+    """True/False — статус подписки; None — не удалось проверить (нет прав и т.п.)."""
+    chat_id: int | str = channel
+    if channel.lstrip("-").isdigit():
+        chat_id = int(channel)
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+    except Exception:
+        return None
+    return member.status in ("member", "administrator", "creator")
 
 
 # ──────────────────────────── карточка подписки ────────────────────────────

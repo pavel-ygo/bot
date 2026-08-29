@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from .config import ConfigError, load_config
 from .db import Database
-from .handlers import admin, buy, user
+from .handlers import admin, admin_extra, bonus, buy, user
 from .jobs import payment_poller, reminders_loop
 from .payments import CryptoBotProvider, YooKassaProvider
 from .remnawave import RemnawaveClient
@@ -59,7 +59,9 @@ async def main() -> None:
 
     dp.include_router(user.router)
     dp.include_router(buy.router)
+    dp.include_router(bonus.router)
     dp.include_router(admin.router)
+    dp.include_router(admin_extra.router)
 
     logging.info("Запуск бота @%s | тарифов: %s | админов: %s",
                  me.username, len(cfg.tariffs), len(cfg.admin_ids))

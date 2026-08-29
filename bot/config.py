@@ -67,6 +67,9 @@ class Config:
     tz: ZoneInfo
     support_url: str | None
     tariffs: dict[str, Tariff]
+    trial_days: int = 1
+    trial_channel: str | None = None       # @username или числовой ID канала
+    trial_channel_url: str | None = None   # ссылка-приглашение для кнопки
 
     # ── провайдеры оплаты, доступные с текущими настройками ──
     @property
@@ -163,6 +166,19 @@ def load_config() -> Config:
     except Exception as e:
         raise ConfigError(f"TZ «{tz_name}» не распознан ({e}). Пример: Europe/Moscow") from e
 
+    trial_days_raw = _get("TRIAL_DAYS", "1")
+    try:
+        trial_days = int(trial_days_raw)
+        if not (0 < trial_days <= 365):
+            raise ValueError
+    except ValueError as e:
+        raise ConfigError(f"TRIAL_DAYS «{trial_days_raw}» — должно быть число от 1 до 365") from e
+
+    trial_channel = _get("TRIAL_CHANNEL") or None
+    trial_channel_url = _get("TRIAL_CHANNEL_URL") or None
+    if trial_channel_url and not trial_channel_url.startswith(("https://t.me/", "http://t.me/")):
+        raise ConfigError("TRIAL_CHANNEL_URL должен быть ссылкой на t.me")
+
     return Config(
         bot_token=bot_token,
         admin_ids=admin_ids,
@@ -180,4 +196,7 @@ def load_config() -> Config:
         tz=tz,
         support_url=_get("SUPPORT_URL") or None,
         tariffs=_parse_tariffs(_get("TARIFFS") or json.dumps(DEFAULT_TARIFFS)),
+        trial_days=trial_days,
+        trial_channel=trial_channel,
+        trial_channel_url=trial_channel_url,
     )

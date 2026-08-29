@@ -8,10 +8,16 @@ def _kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu(*, support_url: str | None = None) -> InlineKeyboardMarkup:
+def main_menu(*, support_url: str | None = None, show_trial: bool = False) -> InlineKeyboardMarkup:
+    bonus_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="🎫 Промокод", callback_data="promo")
+    ]
+    if show_trial:
+        bonus_row.append(InlineKeyboardButton(text="🎁 Пробный период", callback_data="trial"))
     rows = [
         [InlineKeyboardButton(text="🔑 Купить подписку", callback_data="buy")],
         [InlineKeyboardButton(text="💳 Моя подписка", callback_data="menu:sub")],
+        bonus_row,
         [InlineKeyboardButton(text="📖 Как подключиться", callback_data="menu:help")],
     ]
     if support_url:
@@ -28,6 +34,7 @@ def tariffs_menu(tariffs: list) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"{t.title} — {t.price_line()}", callback_data=f"tar:{t.id}")]
         for t in tariffs
     ]
+    rows.append([InlineKeyboardButton(text="🎫 У меня есть промокод", callback_data="promo")])
     rows += back_to_menu()
     return _kb(rows)
 
@@ -89,6 +96,14 @@ def admin_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🚫 Отключить юзера", callback_data="adm:ban"),
             InlineKeyboardButton(text="✅ Включить юзера", callback_data="adm:unban"),
         ],
+        [
+            InlineKeyboardButton(text="🎫 Промокоды", callback_data="adm:promo"),
+            InlineKeyboardButton(text="🔗 Рекламные ссылки", callback_data="adm:camp"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Пробный период", callback_data="adm:trial"),
+            InlineKeyboardButton(text="💳 Способы оплаты", callback_data="adm:pay"),
+        ],
     ])
 
 
@@ -103,3 +118,80 @@ def admin_confirm_broadcast() -> InlineKeyboardMarkup:
 
 def admin_back() -> InlineKeyboardMarkup:
     return _kb([[InlineKeyboardButton(text="⬅️ В админку", callback_data="adm:main")]])
+
+
+# ── промокоды ──────────────────────────────────────────────────────────
+
+
+def promo_list_menu(promos: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for p in promos:
+        icon = "✅" if p["active"] else "⛔️"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{icon} {p['code']} — {p['days']} дн. ({p['used']}/{p['max_uses'] or '∞'})",
+                callback_data=f"adm:promo:info:{p['id']}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Создать промокод", callback_data="adm:promo:new")])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+def promo_detail_menu(promo: dict) -> InlineKeyboardMarkup:
+    toggle_label = "⛔️ Выключить" if promo["active"] else "✅ Включить"
+    return _kb([
+        [InlineKeyboardButton(text=toggle_label, callback_data=f"adm:promo:tg:{promo['id']}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm:promo:del:{promo['id']}")],
+        [InlineKeyboardButton(text="⬅️ К списку", callback_data="adm:promo")],
+    ])
+
+
+# ── рекламные кампании ─────────────────────────────────────────────────
+
+
+def campaign_list_menu(campaigns: list[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=f"🗑 {c['name']}", callback_data=f"adm:camp:del:{c['id']}",
+        )]
+        for c in campaigns
+    ]
+    rows.append([InlineKeyboardButton(text="➕ Создать ссылку", callback_data="adm:camp:new")])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+# ── пробный период ─────────────────────────────────────────────────────
+
+
+def trial_settings_menu(enabled: bool) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(
+            text="⛔️ Выключить" if enabled else "✅ Включить", callback_data="adm:trial:toggle",
+        )],
+        [
+            InlineKeyboardButton(text="📣 Канал", callback_data="adm:trial:chan"),
+            InlineKeyboardButton(text="🔗 Ссылка", callback_data="adm:trial:url"),
+        ],
+        [InlineKeyboardButton(text="📅 Срок (дни)", callback_data="adm:trial:days")],
+        *admin_back().inline_keyboard,
+    ])
+
+
+# ── способы оплаты ─────────────────────────────────────────────────────
+
+
+def pay_toggles_menu(states: dict[str, bool], available: dict[str, bool]) -> InlineKeyboardMarkup:
+    labels = {"stars": "⭐ Telegram Stars", "cryptobot": "🪙 CryptoBot (USDT)",
+              "yookassa": "💳 ЮKassa (карты)"}
+    rows = []
+    for name in ("stars", "cryptobot", "yookassa"):
+        if not available.get(name):
+            continue  # способ не сконфигурирован в .env — скрываем
+        icon = "✅" if states.get(name) else "❌"
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {labels[name]}", callback_data=f"adm:pay:{name}",
+        )])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)

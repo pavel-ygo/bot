@@ -143,6 +143,66 @@ async def test_db():
     await db.close()
 
 
+async def test_settings_and_promo():
+    print("db: настройки, промокоды, кампании, trial:")
+    db = await Database.create("/tmp/test_bot2.db")
+    try:
+        # настройки
+        check("setting default", await db.get_setting("pay_stars", "1") == "1")
+        await db.set_setting("pay_stars", "0")
+        check("setting set", await db.get_setting("pay_stars", "1") == "0")
+
+        # источник (рекламная кампания)
+        await db.upsert_bot_user(500, "u5", "U5", source="tg-ads")
+        await db.upsert_bot_user(500, "u5", "U5")  # повторный вход не меняет источник
+        cur = await db._db.execute("SELECT source FROM bot_users WHERE tg_id=500")
+        r = await cur.fetchone()
+        check("source fixed on first start", r[0] == "tg-ads")
+        await db.add_payment(500, "m1", "stars", "150", "XTR", status="delivered")
+        st = await db.campaign_stats()
+        check("campaign stats", st["tg-ads"]["users"] == 1 and st["tg-ads"]["paid"] == 1)
+    finally:
+        await db.close()
+
+
+async def test_promo_rules():
+    print("db: правила промокодов и trial:")
+    from datetime import timedelta
+
+    from bot.utils import utcnow
+
+    db = await Database.create("/tmp/test_bot3.db")
+    try:
+        check("promo create", await db.create_promo("WELCOME", 1, max_uses=2))
+        check("promo duplicate -> False", not await db.create_promo("WELCOME", 5))
+        promo, reason = await db.activate_promo("welcome", 777)  # регистронезависимо
+        check("promo activate", promo is not None and promo["days"] == 1)
+        promo2, reason2 = await db.activate_promo("WELCOME", 777)
+        check("promo per-user once", promo2 is None and reason2 == "already")
+        promo3, _ = await db.activate_promo("WELCOME", 778)
+        check("promo second user ok", promo3 is not None)
+        promo4, reason4 = await db.activate_promo("WELCOME", 779)
+        check("promo limit reached", promo4 is None and reason4 == "limit")
+        check("promo used counter", (await db.list_promos())[0]["used"] == 2)
+        await db.set_promo_active((await db.list_promos())[0]["id"], False)
+        promo5, _ = await db.activate_promo("WELCOME", 780)
+        check("promo disabled", promo5 is None)
+        await db.delete_promo((await db.list_promos())[0]["id"])
+        check("promo deleted", await db.list_promos() == [])
+
+        await db.create_promo("OLD", 3, expires_at=(utcnow() - timedelta(days=1)).isoformat())
+        promo6, reason6 = await db.activate_promo("OLD", 781)
+        check("promo expired", promo6 is None and reason6 == "expired")
+
+        await db.upsert_bot_user(500, "u5", "U5")
+        check("trial not used", not await db.trial_used(500))
+        await db.mark_trial_used(500)
+        check("trial used", await db.trial_used(500))
+        check("trials count", await db.trials_count() == 1)
+    finally:
+        await db.close()
+
+
 async def test_create_path():
     print("выдача: новый пользователь:")
     fake = FakeRemna(existing_user=None)
@@ -223,6 +283,8 @@ async def test_client_unwrap():
 async def main():
     await test_utils()
     await test_db()
+    await test_settings_and_promo()
+    await test_promo_rules()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()

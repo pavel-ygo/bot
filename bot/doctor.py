@@ -93,6 +93,29 @@ async def main() -> int:
     if cfg.yookassa_shop_id and not cfg.yookassa_enabled:
         print(f"{WARN} ЮKassa: реквизиты заданы не полностью или нет price_rub у тарифов")
 
+    if cfg.trial_channel:
+        print("── Пробный период ────────────────────────────────")
+        print(f"   Канал: {cfg.trial_channel}, срок: {cfg.trial_days} дн.")
+        bot_id = cfg.bot_token.split(":")[0]
+        try:
+            async with httpx.AsyncClient(timeout=15) as http:
+                resp = await http.get(
+                    f"https://api.telegram.org/bot{cfg.bot_token}/getChatMember",
+                    params={"chat_id": cfg.trial_channel, "user_id": bot_id},
+                )
+                data = resp.json()
+            if not data.get("ok"):
+                print(f"{WARN} Не удалось проверить канал: {data.get('description')}")
+            elif data["result"].get("status") != "administrator":
+                print(f"{WARN} Бот НЕ администратор канала {cfg.trial_channel} — "
+                      f"проверка подписки работать не будет!")
+            else:
+                print(f"{OK} Бот — администратор канала, проверка подписки будет работать")
+        except httpx.HTTPError as e:
+            print(f"{WARN} Не удалось связаться с Telegram: {e.__class__.__name__}")
+    else:
+        print(f"{WARN} Пробный период: TRIAL_CHANNEL не задан (функция выключена)")
+
     print("──────────────────────────────────────────────────")
     print("Всё готово к запуску: python -m bot" if code == 0
           else "Исправьте ошибки выше и повторите: python -m bot.doctor")

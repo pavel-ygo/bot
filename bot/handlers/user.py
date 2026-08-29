@@ -2,37 +2,51 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from .. import texts
 from ..keyboards import main_menu, no_sub_menu, sub_menu
 from ..qr import qr_file
 from ..remnawave import RemnaError
-from ..services import Runtime, subscription_card, subscription_kb
+from ..services import Runtime, subscription_card, subscription_kb, trial_config
 
 router = Router(name="user")
 log = logging.getLogger(__name__)
 
+REF_RE = re.compile(r"ref_([a-z0-9_-]{2,32})")
 
-async def _ensure_user(rt: Runtime, message_or_cb) -> None:
+
+async def _ensure_user(rt: Runtime, message_or_cb, source: str | None = None) -> None:
     from_user = message_or_cb.from_user
     if from_user:
-        await rt.db.upsert_bot_user(from_user.id, from_user.username, from_user.first_name)
+        await rt.db.upsert_bot_user(from_user.id, from_user.username, from_user.first_name,
+                                    source=source)
 
 
-def _menu(rt: Runtime):
-    return main_menu(support_url=rt.cfg.support_url)
+async def _menu(rt: Runtime, show_trial: bool | None = None):
+    if show_trial is None:
+        tcfg = await trial_config(rt)
+        show_trial = bool(tcfg["enabled"] and tcfg["channel"])
+    return main_menu(support_url=rt.cfg.support_url, show_trial=show_trial)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, rt: Runtime):
-    await _ensure_user(rt, message)
+    source = None
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) > 1:
+        m = REF_RE.match(args[1].strip())
+        if m:
+            source = m.group(1)
+    await _ensure_user(rt, message, source=source)
     await message.answer(
         texts.START.format(name=message.from_user.first_name or "друг"),
-        reply_markup=_menu(rt),
+        reply_markup=await _menu(rt),
         disable_web_page_preview=True,
     )
 
@@ -40,21 +54,24 @@ async def cmd_start(message: Message, rt: Runtime):
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, rt: Runtime):
     await _ensure_user(rt, message)
-    await message.answer("Главное меню:", reply_markup=_menu(rt))
+    await message.answer("Главное меню:", reply_markup=await _menu(rt))
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message, rt: Runtime):
     await _ensure_user(rt, message)
-    await message.answer(texts.HELP, reply_markup=_menu(rt), disable_web_page_preview=True)
+    await message.answer(
+        texts.HELP, reply_markup=await _menu(rt), disable_web_page_preview=True
+    )
 
 
 @router.callback_query(F.data == "menu:main")
-async def cb_main(query: CallbackQuery, rt: Runtime):
+async def cb_main(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    await state.clear()
     await _ensure_user(rt, query)
     await query.message.edit_text(
         texts.START.format(name=query.from_user.first_name or "друг"),
-        reply_markup=_menu(rt),
+        reply_markup=await _menu(rt),
         disable_web_page_preview=True,
     )
     await query.answer()
