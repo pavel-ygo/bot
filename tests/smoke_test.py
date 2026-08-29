@@ -101,9 +101,9 @@ class FakeRemna:
         await self.client.aclose()
 
 
-def make_rt(fake: FakeRemna) -> Runtime:
+async def make_rt(fake: FakeRemna) -> Runtime:
     cfg = load_config()
-    db = Database("/tmp/test_bot.db")  # не открываем: БД не нужна в этих тестах
+    db = await Database.create("/tmp/test_deliver.db")  # карточка читает БД
     rt = Runtime(cfg=cfg, db=db, remna=RemnawaveClient(cfg))
     rt.remna._http = fake.client  # подменяем транспорт эмуляцией
     rt._squad_uuid = "squad-uuid-1"
@@ -211,7 +211,7 @@ async def test_promo_rules():
 async def test_create_path():
     print("выдача: новый пользователь:")
     fake = FakeRemna(existing_user=None)
-    rt = make_rt(fake)
+    rt = await make_rt(fake)
     text, url = await deliver_subscription(rt, 424242, TARIFF)
     check("текст содержит ссылку", "https://sub.test/abc123" in text)
     check("ссылка возвращена", url == "https://sub.test/abc123")
@@ -221,6 +221,12 @@ async def test_create_path():
     expire = parse_iso(fake.created["expireAt"])
     days = (expire - datetime.now(timezone.utc)).total_seconds() / 86400
     check("срок = 30 дней", 29.9 < days < 30.1, f"({days})")
+    # карточка панели: email/tag/description
+    check("email = @username" if False else "email заполнен",
+          bool(fake.created.get("email")))
+    check("tag paid", fake.created.get("tag") == "tgbot|paid")
+    check("description с источником", "Источник: напрямую" in (fake.created.get("description") or ""))
+    await rt.db.close()
     await fake.aclose()
 
 
@@ -230,7 +236,7 @@ async def test_extend_path():
     existing = {"uuid": "uuid-old", "shortUuid": "old123", "username": "tg100",
                 "status": "ACTIVE", "expireAt": to_iso(future)}
     fake = FakeRemna(existing_user=existing)
-    rt = make_rt(fake)
+    rt = await make_rt(fake)
     text, url = await deliver_subscription(rt, 100, TARIFF)
     check("текст про продление", "продлена" in text)
     patch = next(p for p in fake.patches if "expireAt" in p)
@@ -241,11 +247,16 @@ async def test_extend_path():
     # истёкший пользователь: база = сейчас
     past = datetime.now(timezone.utc) - timedelta(days=5)
     fake2 = FakeRemna(existing_user={**existing, "expireAt": to_iso(past)})
-    rt2 = make_rt(fake2)
+    rt2 = await make_rt(fake2)
     await deliver_subscription(rt2, 100, TARIFF)
     patch2 = next(p for p in fake2.patches if "expireAt" in p)
     days2 = (parse_iso(patch2["expireAt"]) - datetime.now(timezone.utc)).total_seconds() / 86400
     check("истёкший: +30д от сейчас", 29.9 < days2 < 30.1, f"({days2})")
+    patch_full = fake.patches[-1]
+    check("карточка обновляется при продлении",
+          "description" in patch_full and "tag" in patch_full)
+    await rt.db.close()
+    await rt2.db.close()
     await fake.aclose()
     await fake2.aclose()
 
@@ -312,6 +323,11 @@ async def test_tickets_and_refs():
         await db.add_payment(1001, "m1", "stars", "150", "XTR", status="delivered")
         check("paid referral counted", await db.paid_referrals(1000) == 1)
         check("delivered_paid_count", await db.delivered_paid_count(1001) == 1)
+        cnt, rub = await db.paid_summary(1001)
+        check("paid_summary (XTR не в рублевой сумме)", cnt == 1 and rub == 0.0)
+        await db.add_payment(1001, "m1", "card", "199", "RUB", status="delivered")
+        cnt, rub = await db.paid_summary(1001)
+        check("paid_summary rub", cnt == 2 and rub == 199.0)
         await db.add_payment(1000, "refbonus", "refbonus", "3", "days", status="delivered")
         check("bonus days total", await db.ref_bonus_days_total(1000) == 3)
         check("referrals_total", await db.referrals_total() == 1)

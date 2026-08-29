@@ -497,6 +497,21 @@ class Database:
         ) as cur:
             return (await cur.fetchone())[0]
 
+    async def paid_summary(self, tg_id: int) -> tuple[int, float]:
+        """(число реальных оплат, сумма в рублях) пользователя."""
+        async with self._db.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(CASE WHEN currency='RUB'
+                       THEN CAST(amount AS REAL) END), 0)
+            FROM payments
+            WHERE tg_id = ? AND status IN ('paid','delivered')
+              AND provider IN ('stars','cryptobot','yookassa','card')
+            """,
+            (tg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return (row[0] or 0), (row[1] or 0.0)
+
     async def count_referrals(self, referrer_tg_id: int) -> int:
         async with self._db.execute(
             "SELECT COUNT(*) FROM bot_users WHERE referred_by = ?", (str(referrer_tg_id),)

@@ -90,6 +90,54 @@ class Runtime:
         return self._squad_uuid
 
 
+# ──────────────────────────── карточка в панели ────────────────────────────
+
+
+def _segment_of(tariff: Tariff) -> tuple[str, str]:
+    """(тег, пометка в описании) по типу тарифа."""
+    tid = tariff.id
+    if tid == "trial":
+        return "trial", "Пробный период"
+    if tid == "gift":
+        return "gift", "Выдано админом"
+    if tid == "refbonus":
+        return "refbonus", "Реф. бонус"
+    if tid.startswith("promo_"):
+        code = tid.removeprefix("promo_").upper()
+        return "promo", f"Промокод {code}"
+    return "paid", "Оплата"
+
+
+async def panel_card_fields(rt: Runtime, tg_id: int | None, tariff: Tariff) -> dict:
+    """Собирает email/tag/description для карточки пользователя в панели."""
+    from .utils import utcnow
+
+    segment, note = _segment_of(tariff)
+    tag = f"tgbot|{segment}"
+    bot_user = await rt.db.get_bot_user(tg_id) if tg_id else None
+    tg_username = (bot_user or {}).get("username")
+    email = f"@{tg_username}" if tg_username else (f"id{tg_id}" if tg_id else "")
+
+    source = "напрямую"
+    if bot_user:
+        if bot_user.get("source"):
+            source = bot_user["source"]
+        elif bot_user.get("referred_by"):
+            source = f"реферал {bot_user['referred_by']}"
+
+    if tg_id:
+        cnt, rub = await rt.db.paid_summary(tg_id)
+    else:
+        cnt, rub = 0, 0.0
+    date = utcnow().astimezone(rt.cfg.tz).strftime("%d.%m.%Y")
+    if note == "Оплата":
+        desc = f"Источник: {source} | Покупок: {cnt} ({rub:g} ₽) | {note} {date}"
+    else:
+        desc = f"Источник: {source} | {note} +{tariff.days} дн. | {date}"
+    return {"email": email, "tag": tag, "description": desc[:500]}
+
+
+
 # ──────────────────────────── выдача подписки ────────────────────────────
 
 
@@ -120,6 +168,16 @@ async def deliver_subscription(
                 await rt.remna.reset_traffic(user["uuid"])
             except RemnaError as e:
                 log.warning("reset_traffic failed: %s", e)
+        # обновляем карточку в панели (email/tag/description)
+        if tg_id is not None:
+            try:
+                card = await panel_card_fields(rt, tg_id, tariff)
+                updates: dict = {"tag": card["tag"], "description": card["description"]}
+                if card["email"]:
+                    updates["email"] = card["email"]
+                await rt.remna.update_user(user["uuid"], **updates)
+            except RemnaError as e:
+                log.warning("panel card update failed: %s", e)
         fresh = await rt.remna.get_user(user["uuid"])
         url = _safe_url(rt, fresh)
         return texts.SUB_EXTENDED.format(expire=fmt_date(new_expire, rt.cfg.tz), url=url), url
@@ -130,22 +188,51 @@ async def deliver_subscription(
     base_name = f"tg{tg_id}"
     created: dict | None = None
     last_error: Exception | None = None
+    card = await panel_card_fields(rt, tg_id, tariff)
     for attempt in range(3):
         username = base_name if attempt == 0 else f"{base_name}_{random_suffix()}"
+        base_payload = {
+            "username": username,
+            "expire_at": to_iso(now + timedelta(days=tariff.days)),
+            "squad_uuids": [squad],
+            "telegram_id": tg_id,
+        }
+        full_payload = {
+            **base_payload,
+            "email": card["email"] or None,
+            "description": card["description"],
+            "tag": card["tag"],
+        }
         try:
-            created = await rt.remna.create_user(
-                username,
-                expire_at=to_iso(now + timedelta(days=tariff.days)),
-                squad_uuids=[squad],
-                telegram_id=tg_id,
-                description=f"TG shop bot • {tariff.title}",
-                tag="tgbot",
-            )
+            created = await rt.remna.create_user(**full_payload)
             break
         except RemnaError as e:
             last_error = e
             if e.status == 409:  # имя занято — пробуем с суффиксом
                 continue
+            if e.status == 400:
+                # панель не приняла доп. поля (email/description/tag) —
+                # пробуем без email, затем минимальный payload
+                try:
+                    created = await rt.remna.create_user(
+                        **{**base_payload, "description": card["description"],
+                           "tag": card["tag"]}
+                    )
+                    break
+                except RemnaError as e2:
+                    last_error = e2
+                    if e2.status == 400:
+                        try:
+                            created = await rt.remna.create_user(**base_payload)
+                            break
+                        except RemnaError as e3:
+                            last_error = e3
+                            if e3.status == 409:
+                                continue
+                            raise
+                    if e2.status == 409:
+                        continue
+                    raise
             raise
     if created is None:
         raise last_error or RemnaError("Не удалось создать пользователя")

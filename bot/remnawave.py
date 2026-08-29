@@ -101,6 +101,7 @@ class RemnawaveClient:
         expire_at: str,
         squad_uuids: list[str],
         telegram_id: int | None = None,
+        email: str | None = None,
         description: str | None = None,
         tag: str | None = None,
     ) -> dict:
@@ -111,6 +112,8 @@ class RemnawaveClient:
         }
         if telegram_id:
             payload["telegramId"] = telegram_id
+        if email:
+            payload["email"] = email
         if description:
             payload["description"] = description
         if tag:
