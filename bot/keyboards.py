@@ -115,6 +115,10 @@ def admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="adm:csv")],
         [InlineKeyboardButton(text="🏦 Оплата на карту", callback_data="adm:card")],
         [InlineKeyboardButton(text="🔔 Отчёты и алерты", callback_data="adm:alerts")],
+        [
+            InlineKeyboardButton(text="💼 Тарифы", callback_data="adm:tariffs"),
+            InlineKeyboardButton(text="👥 Операторы оплаты", callback_data="adm:operators"),
+        ],
     ])
 
 
@@ -390,4 +394,50 @@ def alerts_menu(*, reports_enabled: bool, node_alerts_enabled: bool,
             callback_data="adm:al:backup",
         )],
         *admin_back().inline_keyboard,
+    ])
+
+
+# ── операторы оплаты ───────────────────────────────────────────────────
+
+
+def operators_menu(operators: list[int]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"🗑 {tg}", callback_data=f"adm:op:del:{tg}")]
+        for tg in operators
+    ]
+    rows.append([InlineKeyboardButton(text="➕ Добавить оператора", callback_data="adm:op:add")])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+# ── редактор тарифов ───────────────────────────────────────────────────
+
+
+def tariffs_admin_menu(tariffs: list) -> InlineKeyboardMarkup:
+    rows = []
+    for t in tariffs:
+        vis = "👁" if t.visible else "🚫"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{vis} {t.title} — {t.days} дн. / {t.price_rub:g} ₽",
+                callback_data=f"adm:tar:info:{t.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Создать тариф", callback_data="adm:tar:new")])
+    rows += admin_back().inline_keyboard
+    return _kb(rows)
+
+
+def tariff_detail_menu(tariff) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="✏️ Название", callback_data=f"adm:tar:edit:{tariff.id}:title"),
+         InlineKeyboardButton(text="⏳ Дней", callback_data=f"adm:tar:edit:{tariff.id}:days")],
+        [InlineKeyboardButton(text="💳 Цена", callback_data=f"adm:tar:edit:{tariff.id}:price_rub"),
+         InlineKeyboardButton(text="📝 Описание", callback_data=f"adm:tar:edit:{tariff.id}:description")],
+        [InlineKeyboardButton(
+            text="🚫 Скрыть" if tariff.visible else "👁 Показать",
+            callback_data=f"adm:tar:vis:{tariff.id}",
+        )],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm:tar:del:{tariff.id}")],
+        [InlineKeyboardButton(text="⬅️ К тарифам", callback_data="adm:tariffs")],
     ])

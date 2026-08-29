@@ -430,6 +430,41 @@ async def test_segments_and_nudge():
         await db.close()
 
 
+async def test_tariffs_and_operators():
+    from bot.config import Tariff
+
+    print("админка: тарифы из БД и операторы:")
+    db = await Database.create("/tmp/test_bot8.db")
+    try:
+        cfg = load_config()
+        rt = Runtime(cfg=cfg, db=db, remna=None)
+
+        # операторы: парсинг, добавление, получатели
+        check("no operators by default", await rt.payment_operators() == [])
+        await db.set_setting("pay_operators", " 777, 888 ,abc,777")
+        ops = await rt.payment_operators()
+        check("operators parsed", ops == [777, 888])
+        check("admin is operator", await rt.is_payment_operator(111))
+        check("operator confirmed", await rt.is_payment_operator(777))
+        check("stranger not operator", not await rt.is_payment_operator(999))
+        rec = await rt.payment_recipients()
+        check("recipients dedup", rec.count(111) == 1 and rec.count(777) == 1)
+
+        # сериализация тарифов + reload из БД
+        rt.cfg.tariffs["extra"] = Tariff(
+            id="extra", title="Доп", days=7, description="",
+            price_rub=99, visible=False,
+        )
+        await db.set_setting("tariffs_json", await rt.serialize_tariffs())
+        rt.cfg.tariffs = {}  # стираем
+        await rt.reload_tariffs()
+        check("tariffs restored from db", "extra" in rt.cfg.tariffs)
+        check("invisible flag survives", rt.cfg.tariffs["extra"].visible is False)
+        check("price survives", rt.cfg.tariffs["extra"].price_rub == 99)
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
@@ -438,6 +473,7 @@ async def main():
     await test_tickets_and_refs()
     await test_card_provider()
     await test_segments_and_nudge()
+    await test_tariffs_and_operators()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()
@@ -446,6 +482,8 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
 
 
 

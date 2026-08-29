@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 @router.callback_query(F.data == "buy")
 async def cb_buy(query: CallbackQuery, rt: Runtime):
-    tariffs = list(rt.cfg.tariffs.values())
+    tariffs = [t for t in rt.cfg.tariffs.values() if t.visible]
     await query.message.edit_text(texts.MENU_BUY, reply_markup=tariffs_menu(tariffs))
     await query.answer()
 

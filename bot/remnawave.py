@@ -179,6 +179,19 @@ class RemnawaveClient:
             data = data.get("internalSquads") or data.get("squads") or []
         return data if isinstance(data, list) else []
 
+    async def nodes_usage(self) -> list[dict]:
+        """Статистика нод (онлайн-юзеры/трафик) — зависит от версии панели.
+
+        Возвращает список dict; при отсутствии эндпоинта — пустой список.
+        """
+        try:
+            data = await self._request("GET", "/nodes/usage")
+        except RemnaError:
+            return []
+        if isinstance(data, dict):
+            data = data.get("usage") or data.get("response") or data.get("items") or []
+        return data if isinstance(data, list) else []
+
     async def list_nodes(self) -> list[dict]:
         data = await self._request("GET", "/nodes")
         if isinstance(data, dict):

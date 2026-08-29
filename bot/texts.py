@@ -419,7 +419,7 @@ NOTIF_PAYMENT = (
     "Тариф: {title} ({days} дн.)\n"
     "Сумма: <b>{amount}</b> ({provider})\n"
     "Клиент: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n"
-    "Источник: {source}"
+    "Источник: {source}\n\n#покупка"
 )
 NOTIF_NEW_USER = (
     "🆕 <b>Новый пользователь</b>\n"
@@ -478,7 +478,7 @@ CARD_TO_ADMIN = (
     "💳 <b>Чек к оплате #{pid}</b>\n"
     "Тариф: {title} ({days} дн.) на сумму <b>{amount}</b>\n"
     "От: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n\n"
-    "Сообщение выше — скриншот/чек перевода. Подтвердите после проверки поступления."
+    "Сообщение выше — скриншот/чек перевода. Подтвердите после проверки поступления.\n\n#оплата"
 )
 CARD_ALREADY_DONE = "Эта оплата уже обработана."
 CARD_APPROVED = "✅ Подтверждено, подписка выдана."
@@ -511,7 +511,7 @@ CARD_AUTO_TO_ADMIN = (
     "Тариф: {title} ({days} дн.) на сумму <b>{amount}</b>\n"
     "От: <a href=\"tg://user?id={uid}\">{name}</a> (<code>{uid}</code>)\n\n"
     "Подписка выдана автоматически по чеку (сообщение выше ☝️).\n"
-    "<b>Проверьте поступление денег</b> и отметьте результат:"
+    "<b>Проверьте поступление денег</b> и отметьте результат:\n\n#оплата"
 )
 CARD_VERIFIED_OK = "✅ Отмечено: деньги поступили."
 CARD_REVOKED_ADMIN = "🚫 Подписка отключена, пользователь уведомлён."
@@ -604,3 +604,61 @@ MY_PAYMENTS_TITLE = "🧾 <b>Мои покупки</b>\n\n{list}"
 MY_PAYMENTS_EMPTY = "🧾 Покупок пока нет."
 MY_PAYMENTS_LINE = "{icon} #{id} — {date}: {amount} ({tariff}) {status}\n"
 MY_PAYMENTS_MORE = "…и ещё {extra} более старых."
+
+
+# ── операторы оплаты ───────────────────────────────────────────────────
+
+ADMIN_OPERATORS = (
+    "👥 <b>Операторы оплаты</b>\n\n"
+    "Оператор получает чеки на подтверждение и может подтверждать/отклонять оплаты. "
+    "Доступа к остальной админке у него нет.\n\n"
+    "{list}"
+)
+ADMIN_OPERATORS_EMPTY = "Операторов нет — чеки подтверждают только администраторы."
+ADMIN_OPERATORS_ADD_ASK = (
+    "Пришлите Telegram ID оператора (число).\n"
+    "Пользователь должен запустить бота хотя бы раз? Не обязательно — ID достаточно.\n\n"
+    "Для отмены: /cancel"
+)
+ADMIN_OPERATORS_ADDED = "✅ Оператор <code>{id}</code> добавлен. Теперь ему приходят чеки."
+ADMIN_OPERATORS_REMOVED = "🗑 Оператор <code>{id}</code> удалён."
+
+# ── редактор тарифов ───────────────────────────────────────────────────
+
+ADMIN_TARIFFS = "💼 <b>Тарифы</b>\n\n{list}\nТарифы сохраняются в боте и работают сразу."
+ADMIN_TARIFFS_EMPTY = "Тарифов нет. Создайте первый."
+ADMIN_TARIFF_LINE = "├ {visible} <b>{title}</b> — {days} дн. / {price} [{id}]\n"
+ADMIN_TARIFF_ON = "👁"
+ADMIN_TARIFF_OFF = "🚫"
+ADMIN_TARIFF_DETAIL = (
+    "💼 <b>{title}</b> [{id}]\n\n"
+    "⏳ Дней: <b>{days}</b>\n"
+    "💳 Цена: <b>{price}</b>\n"
+    "📝 Описание: {description}\n"
+    "Видимость: {visible}"
+)
+ADMIN_TARIFF_VISIBLE_ON = "👁 виден покупателям"
+ADMIN_TARIFF_VISIBLE_OFF = "🚫 скрыт"
+ADMIN_TARIFF_ASK_TITLE = "Пришлите название тарифа (до 64 символов).\n\nДля отмены: /cancel"
+ADMIN_TARIFF_ASK_DAYS = "Сколько дней подписки? Пришлите число (1–3650)."
+ADMIN_TARIFF_ASK_PRICE = (
+    "Цена в рублях. Пришлите число (например 199 или 199.50).\n"
+    "0 — тариф без цены (толькоpromo/спецоплата)."
+)
+ADMIN_TARIFF_ASK_DESC = (
+    "Пришлите описание тарифа (одной строкой) или <code>-</code> — без описания."
+)
+ADMIN_TARIFF_CREATED = "✅ Тариф «{title}» создан и уже в продаже."
+ADMIN_TARIFF_UPDATED = "✅ Сохранено: {field} = {value}"
+ADMIN_TARIFF_DELETED = "🗑 Тариф удалён."
+ADMIN_TARIFF_LAST = "❌ Нельзя удалить последний тариф — магазин не может быть пустым."
+ADMIN_TARIFF_EDIT_ASK = {
+    "title": "Пришлите новое название тарифа:",
+    "days": "Пришлите новое число дней (1–3650):",
+    "price_rub": "Пришлите новую цену в рублях (число):",
+    "description": "Пришлите новое описание одной строкой (или <code>-</code> — убрать):",
+}
+ADMIN_TARIFF_EDIT_FIELD_RU = {
+    "title": "название", "days": "дней",
+    "price_rub": "цена", "description": "описание",
+}

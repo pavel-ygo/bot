@@ -51,6 +51,56 @@ class Runtime:
             reasons.append(texts.PAY_YK_OFF)
         return reasons
 
+    async def reload_tariffs(self) -> None:
+        """Тарифы из БД (админка) с приоритетом над TARIFFS из .env."""
+        from .config import _parse_tariffs
+
+        raw = await self.db.get_setting("tariffs_json")
+        if raw:
+            try:
+                self.cfg.tariffs = _parse_tariffs(raw)
+            except Exception as e:  # noqa: BLE001
+                log.error("tariffs_json invalid, keeping current: %s", e)
+
+    async def serialize_tariffs(self) -> str:
+        """Текущие тарифы -> JSON для хранения в БД."""
+        import json as _json
+
+        payload = {}
+        for tid, t in self.cfg.tariffs.items():
+            payload[tid] = {
+                "title": t.title, "days": t.days,
+                "price_rub": t.price_rub, "price_stars": t.price_stars,
+                "price_usdt": t.price_usdt,
+                "description": t.description, "visible": t.visible,
+            }
+        return _json.dumps(payload, ensure_ascii=False)
+
+    async def payment_recipients(self) -> list[int]:
+        """Кому пересылать чеки: админы + операторы, без дублей."""
+        operators = await self.payment_operators()
+        rec = list(self.cfg.admin_ids)
+        for op in operators:
+            if op not in rec:
+                rec.append(op)
+        return rec
+
+    async def payment_operators(self) -> list[int]:
+        raw = await self.db.get_setting("pay_operators", "") or ""
+        out: list[int] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                tg = int(part)
+                if tg not in out:
+                    out.append(tg)
+        return out
+
+    async def is_payment_operator(self, tg_id: int) -> bool:
+        if tg_id in self.cfg.admin_ids:
+            return True
+        return tg_id in await self.payment_operators()
+
     async def available_providers(self, tariff: Tariff) -> dict[str, bool]:
         """Способы оплаты: сконфигурированы И включены в админке.
 

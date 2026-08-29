@@ -37,6 +37,7 @@ class Tariff:
     price_rub: float | None = None
     price_stars: int | None = None
     price_usdt: float | None = None
+    visible: bool = True  # показывать покупателям в списке тарифов
 
     def price_line(self) -> str:
         parts: list[str] = []
@@ -129,6 +130,7 @@ def _parse_tariffs(raw: str) -> dict[str, Tariff]:
             price_rub=None if item.get("price_rub") is None else float(item["price_rub"]),
             price_stars=None if stars is None else int(stars),
             price_usdt=None if item.get("price_usdt") is None else float(item["price_usdt"]),
+            visible=bool(item.get("visible", True)),
         )
     return tariffs
 

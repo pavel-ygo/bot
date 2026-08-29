@@ -17,6 +17,9 @@ from ..config import Tariff
 from ..keyboards import (
     alerts_menu,
     csv_menu,
+    operators_menu,
+    tariff_detail_menu,
+    tariffs_admin_menu,
     user_card_menu,
     admin_menu,
     campaign_list_menu,
@@ -281,6 +284,18 @@ async def camp_name_input(message: Message, state: FSMContext, rt: Runtime):
 
 
 # ══════════════════════════ ПРОБНЫЙ ПЕРИОД ══════════════════════════
+
+
+class OperatorFSM(StatesGroup):
+    add = State()
+
+
+class TariffFSM(StatesGroup):
+    new_title = State()
+    new_days = State()
+    new_price = State()
+    new_desc = State()
+    edit_value = State()
 
 
 class TrialFSM(StatesGroup):
@@ -955,3 +970,319 @@ async def cb_xlsx(query: CallbackQuery, rt: Runtime):
     data["daily"] = await _daily_revenue(rt)
     file = _build_xlsx(rt, data)
     await query.message.answer_document(file, caption="📊 Полный отчёт магазина (Excel)")
+
+
+# ══════════════════════════ ОПЕРАТОРЫ ОПЛАТЫ ══════════════════════════
+
+
+async def _operators_text_and_kb(rt: Runtime):
+    ops = await rt.db.payment_operators()
+    listing = "\n".join(f"├ 👤 <code>{tg}</code>" for tg in ops) or (
+        "├ " + texts.ADMIN_OPERATORS_EMPTY
+    )
+    return texts.ADMIN_OPERATORS.format(list=listing + "\n"), operators_menu(ops)
+
+
+@router.callback_query(F.data == "adm:operators")
+async def cb_operators(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    text, kb = await _operators_text_and_kb(rt)
+    await query.message.edit_text(text, reply_markup=kb)
+    await query.answer()
+
+
+@router.callback_query(F.data == "adm:op:add")
+async def cb_operator_add(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(OperatorFSM.add)
+    await query.message.edit_text(texts.ADMIN_OPERATORS_ADD_ASK)
+    await query.answer()
+
+
+@router.message(OperatorFSM.add)
+async def operator_add_input(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    await state.clear()
+    if value.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not value.lstrip("-").isdigit():
+        await message.answer("Нужен числовой Telegram ID. Попробуйте ещё раз:")
+        await state.set_state(OperatorFSM.add)
+        return
+    tg_id = int(value)
+    ops = await rt.db.payment_operators()
+    if tg_id in rt.cfg.admin_ids:
+        return await message.answer("Это администратор — он и так получает чеки.",
+                                    reply_markup=admin_menu())
+    if tg_id in ops:
+        return await message.answer("Этот оператор уже добавлен.", reply_markup=admin_menu())
+    ops.append(tg_id)
+    await rt.db.set_setting("pay_operators", ",".join(map(str, ops)))
+    await message.answer(
+        texts.ADMIN_OPERATORS_ADDED.format(id=tg_id), reply_markup=admin_menu()
+    )
+
+
+@router.callback_query(F.data.startswith("adm:op:del:"))
+async def cb_operator_del(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    tg_id = int(query.data.rsplit(":", 1)[1])
+    ops = await rt.db.payment_operators()
+    if tg_id in ops:
+        ops.remove(tg_id)
+        await rt.db.set_setting("pay_operators", ",".join(map(str, ops)))
+    await query.answer(texts.ADMIN_OPERATORS_REMOVED.format(id=tg_id), show_alert=True)
+    text, kb = await _operators_text_and_kb(rt)
+    try:
+        await query.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass
+
+
+# ══════════════════════════ РЕДАКТОР ТАРИФОВ ══════════════════════════
+
+
+def _price_str(t) -> str:
+    return f"{t.price_rub:g} ₽" if t.price_rub is not None else "без цены"
+
+
+async def _tariffs_admin_text(rt: Runtime) -> str:
+    tariffs = sorted(rt.cfg.tariffs.values(), key=lambda t: (not t.visible, t.days))
+    if not tariffs:
+        return texts.ADMIN_TARIFFS.format(list=texts.ADMIN_TARIFFS_EMPTY)
+    lines = "".join(
+        texts.ADMIN_TARIFF_LINE.format(
+            visible=texts.ADMIN_TARIFF_ON if t.visible else texts.ADMIN_TARIFF_OFF,
+            title=t.title, days=t.days, price=_price_str(t), id=t.id,
+        )
+        for t in tariffs
+    )
+    return texts.ADMIN_TARIFFS.format(list=lines)
+
+
+@router.callback_query(F.data == "adm:tariffs")
+async def cb_tariffs(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await query.message.edit_text(
+        await _tariffs_admin_text(rt), reply_markup=tariffs_admin_menu(
+            sorted(rt.cfg.tariffs.values(), key=lambda t: (not t.visible, t.days))
+        )
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("adm:tar:info:"))
+async def cb_tariff_info(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    tid = query.data.rsplit(":", 1)[1]
+    t = rt.cfg.tariffs.get(tid)
+    if t is None:
+        await query.answer("Тариф не найден", show_alert=True)
+        return
+    await query.message.edit_text(
+        texts.ADMIN_TARIFF_DETAIL.format(
+            title=t.title, id=t.id, days=t.days, price=_price_str(t),
+            description=t.description or "—",
+            visible=(texts.ADMIN_TARIFF_VISIBLE_ON if t.visible
+                     else texts.ADMIN_TARIFF_VISIBLE_OFF),
+        ),
+        reply_markup=tariff_detail_menu(t),
+    )
+    await query.answer()
+
+
+async def _save_tariffs(rt: Runtime) -> None:
+    await rt.db.set_setting("tariffs_json", await rt.serialize_tariffs())
+    await rt.reload_tariffs()
+
+
+@router.callback_query(F.data.startswith("adm:tar:vis:"))
+async def cb_tariff_visible(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    tid = query.data.rsplit(":", 1)[1]
+    t = rt.cfg.tariffs.get(tid)
+    if t is None:
+        await query.answer("Тариф не найден", show_alert=True)
+        return
+    from ..config import Tariff
+
+    rt.cfg.tariffs[tid] = Tariff(
+        id=t.id, title=t.title, days=t.days, description=t.description,
+        price_rub=t.price_rub, price_stars=t.price_stars, price_usdt=t.price_usdt,
+        visible=not t.visible,
+    )
+    await _save_tariffs(rt)
+    await cb_tariff_info(query, rt)
+
+
+@router.callback_query(F.data.startswith("adm:tar:del:"))
+async def cb_tariff_delete(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    tid = query.data.rsplit(":", 1)[1]
+    if len(rt.cfg.tariffs) <= 1:
+        return await query.answer(texts.ADMIN_TARIFF_LAST, show_alert=True)
+    if tid in rt.cfg.tariffs:
+        del rt.cfg.tariffs[tid]
+        await _save_tariffs(rt)
+    await query.answer(texts.ADMIN_TARIFF_DELETED, show_alert=True)
+    await cb_tariffs(query, rt)
+
+
+@router.callback_query(F.data.startswith("adm:tar:edit:"))
+async def cb_tariff_edit(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    _, _, tid, field = query.data.split(":")
+    if tid not in rt.cfg.tariffs or field not in texts.ADMIN_TARIFF_EDIT_ASK:
+        await query.answer("Не найдено", show_alert=True)
+        return
+    await state.set_state(TariffFSM.edit_value)
+    await state.update_data(tid=tid, field=field)
+    await query.message.answer(texts.ADMIN_TARIFF_EDIT_ASK[field])
+    await query.answer()
+
+
+@router.message(TariffFSM.edit_value)
+async def tariff_edit_input(message: Message, state: FSMContext, rt: Runtime):
+    from ..config import Tariff
+
+    value = (message.text or "").strip()
+    data = await state.get_data()
+    await state.clear()
+    tid, field = data.get("tid"), data.get("field")
+    t = rt.cfg.tariffs.get(tid)
+    if t is None or not field or value.lower() == "/cancel":
+        return await message.answer("Отменено.")
+    kwargs = {}
+    if field == "title":
+        if not (1 <= len(value) <= 64):
+            await message.answer("Название 1–64 символа. Ещё раз:")
+            await state.set_state(TariffFSM.edit_value)
+            return
+        kwargs["title"] = value
+        shown = value
+    elif field == "days":
+        if not value.isdigit() or not (1 <= int(value) <= 3650):
+            await message.answer("Число дней 1–3650. Ещё раз:")
+            await state.set_state(TariffFSM.edit_value)
+            return
+        kwargs["days"] = int(value)
+        shown = f"{value} дн."
+    elif field == "price_rub":
+        try:
+            price = round(float(value.replace(",", ".")), 2)
+            if price < 0:
+                raise ValueError
+        except ValueError:
+            await message.answer("Цена — число (например 199). Ещё раз:")
+            await state.set_state(TariffFSM.edit_value)
+            return
+        kwargs["price_rub"] = price or None
+        shown = f"{price:g} ₽"
+    elif field == "description":
+        kwargs["description"] = "" if value == "-" else value[:200]
+        shown = kwargs["description"] or "—"
+    else:
+        return await message.answer("Неизвестное поле.")
+    rt.cfg.tariffs[tid] = Tariff(
+        id=t.id, title=t.title, days=t.days,
+        description=kwargs.get("description", t.description),
+        price_rub=kwargs.get("price_rub", t.price_rub),
+        price_stars=t.price_stars, price_usdt=t.price_usdt,
+        visible=t.visible,
+        **({"title": kwargs["title"]} if "title" in kwargs else {}),
+        **({"days": kwargs["days"]} if "days" in kwargs else {}),
+    )
+    await _save_tariffs(rt)
+    await message.answer(
+        texts.ADMIN_TARIFF_UPDATED.format(
+            field=texts.ADMIN_TARIFF_EDIT_FIELD_RU.get(field, field), value=shown,
+        ),
+        reply_markup=admin_menu(),
+    )
+
+
+@router.callback_query(F.data == "adm:tar:new")
+async def cb_tariff_new(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(TariffFSM.new_title)
+    await query.message.edit_text(texts.ADMIN_TARIFF_ASK_TITLE)
+    await query.answer()
+
+
+@router.message(TariffFSM.new_title)
+async def tariff_new_title(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    if value.lower() == "/cancel":
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not (1 <= len(value) <= 64):
+        await message.answer("Название 1–64 символа:")
+        return
+    await state.update_data(title=value)
+    await state.set_state(TariffFSM.new_days)
+    await message.answer(texts.ADMIN_TARIFF_ASK_DAYS)
+
+
+@router.message(TariffFSM.new_days)
+async def tariff_new_days(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip()
+    if not value.isdigit() or not (1 <= int(value) <= 3650):
+        await message.answer(texts.ADMIN_TARIFF_ASK_DAYS)
+        return
+    await state.update_data(days=int(value))
+    await state.set_state(TariffFSM.new_price)
+    await message.answer(texts.ADMIN_TARIFF_ASK_PRICE)
+
+
+@router.message(TariffFSM.new_price)
+async def tariff_new_price(message: Message, state: FSMContext, rt: Runtime):
+    value = (message.text or "").strip().replace(",", ".")
+    try:
+        price = round(float(value), 2)
+        if price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer(texts.ADMIN_TARIFF_ASK_PRICE)
+        return
+    await state.update_data(price_rub=price)
+    await state.set_state(TariffFSM.new_desc)
+    await message.answer(texts.ADMIN_TARIFF_ASK_DESC)
+
+
+@router.message(TariffFSM.new_desc)
+async def tariff_new_desc(message: Message, state: FSMContext, rt: Runtime):
+    from ..config import Tariff
+
+    value = (message.text or "").strip()
+    await state.clear()
+    if value.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    data = await state.get_data() or {}
+    title = data.get("title", "Тариф")
+    days = data.get("days", 30)
+    price = data.get("price_rub") or None
+
+    # уникальный id
+    base = re.sub(r"[^a-z0-9_-]", "", title.lower().replace(" ", "-"))[:20] or "tariff"
+    tid = base
+    n = 2
+    while tid in rt.cfg.tariffs:
+        tid = f"{base}{n}"
+        n += 1
+    rt.cfg.tariffs[tid] = Tariff(
+        id=tid, title=title, days=days, description="" if value == "-" else value[:200],
+        price_rub=price, visible=True,
+    )
+    await _save_tariffs(rt)
+    await message.answer(
+        texts.ADMIN_TARIFF_CREATED.format(title=title), reply_markup=admin_menu()
+    )

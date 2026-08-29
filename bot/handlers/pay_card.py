@@ -40,6 +40,11 @@ def _is_admin(rt: Runtime, user_id: int) -> bool:
     return user_id in rt.cfg.admin_ids
 
 
+async def _can_confirm(rt: Runtime, user_id: int) -> bool:
+    """Админ или оператор оплаты."""
+    return await rt.is_payment_operator(user_id)
+
+
 async def _card_text(rt: Runtime, tariff, amount: float) -> str:
     cs = await card_settings(rt)
     bank_line = texts.CARD_BANK_LINE.format(bank=cs["bank"]) if cs["bank"] else ""
@@ -132,7 +137,7 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
                 except Exception:
                     pass
             return
-        for admin_id in rt.cfg.admin_ids:
+        for admin_id in await rt.payment_recipients():
             try:
                 await bot.copy_message(admin_id, message.chat.id, message.message_id)
                 await bot.send_message(
@@ -150,7 +155,7 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
                 log.warning("auto receipt to admin %s: %s", admin_id, e)
         return
 
-    for admin_id in rt.cfg.admin_ids:
+    for admin_id in await rt.payment_recipients():
         try:
             await bot.copy_message(admin_id, message.chat.id, message.message_id)
             await bot.send_message(admin_id, admin_info,
@@ -175,7 +180,7 @@ async def card_receipt_other(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("pc:ok:"))
 async def cb_approve(query: CallbackQuery, rt: Runtime, bot: Bot):
-    if not _is_admin(rt, query.from_user.id):
+    if not await _can_confirm(rt, query.from_user.id):
         return
     pid = int(query.data.rsplit(":", 1)[1])
     payment = await rt.db.get_payment(pid)
@@ -204,7 +209,7 @@ async def cb_approve(query: CallbackQuery, rt: Runtime, bot: Bot):
 
 @router.callback_query(F.data.startswith("pc:no:"))
 async def cb_reject(query: CallbackQuery, state: FSMContext, rt: Runtime):
-    if not _is_admin(rt, query.from_user.id):
+    if not await _can_confirm(rt, query.from_user.id):
         return
     pid = int(query.data.rsplit(":", 1)[1])
     payment = await rt.db.get_payment(pid)
@@ -219,7 +224,7 @@ async def cb_reject(query: CallbackQuery, state: FSMContext, rt: Runtime):
 
 @router.callback_query(F.data.startswith("pc:no2:"))
 async def cb_reject_with_reason(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot):
-    if not _is_admin(rt, query.from_user.id):
+    if not await _can_confirm(rt, query.from_user.id):
         return
     _, _, pid_raw, code = query.data.split(":")
     pid = int(pid_raw)
@@ -305,8 +310,8 @@ async def cb_show_details(query: CallbackQuery, rt: Runtime):
 
 @router.callback_query(F.data.startswith("pc:verify:"))
 async def cb_auto_verify(query: CallbackQuery, rt: Runtime, bot: Bot):
-    """Админ подтвердил, что деньги реально поступили (пост-проверка авто-режима)."""
-    if not _is_admin(rt, query.from_user.id):
+    """Оператор/админ подтвердил поступление денег (пост-проверка авто-режима)."""
+    if not await _can_confirm(rt, query.from_user.id):
         return
     pid = int(query.data.rsplit(":", 1)[1])
     payment = await rt.db.get_payment(pid)
@@ -325,7 +330,7 @@ async def cb_auto_verify(query: CallbackQuery, rt: Runtime, bot: Bot):
 @router.callback_query(F.data.startswith("pc:revoke:"))
 async def cb_auto_revoke(query: CallbackQuery, rt: Runtime, bot: Bot):
     """Деньги не пришли — отключаем подписку пользователю."""
-    if not _is_admin(rt, query.from_user.id):
+    if not await _can_confirm(rt, query.from_user.id):
         return
     pid = int(query.data.rsplit(":", 1)[1])
     payment = await rt.db.get_payment(pid)

@@ -36,6 +36,7 @@ async def main() -> None:
     db = await Database.create(cfg.db_path)
     remna = RemnawaveClient(cfg)
     rt = Runtime(cfg=cfg, db=db, remna=remna)
+    await rt.reload_tariffs()  # тарифы из админки имеют приоритет над .env
     if cfg.cryptobot_enabled:
         rt.cryptobot = CryptoBotProvider(cfg.cryptobot_token, testnet=cfg.cryptobot_testnet)
     if cfg.yookassa_enabled:

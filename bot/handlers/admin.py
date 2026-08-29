@@ -116,13 +116,36 @@ async def cb_nodes(query: CallbackQuery, rt: Runtime):
         await query.message.edit_text(f"❌ Ошибка: {e}", reply_markup=admin_back())
         await query.answer()
         return
+    usage = {}
+    try:
+        for u in await rt.remna.nodes_usage():
+            key = u.get("nodeUuid") or u.get("uuid") or u.get("name")
+            if key:
+                usage[str(key)] = u
+    except Exception:
+        usage = {}
     lines = []
     online = 0
     for n in nodes:
         connected = bool(n.get("isConnected") or n.get("is_connected"))
         online += connected
-        lines.append((texts.ADMIN_NODES_ONLINE if connected else texts.ADMIN_NODES_OFFLINE)
-                     .format(name=n.get("name", "?")))
+        name = n.get("name", "?")
+        u = usage.get(str(n.get("uuid") or "")) or usage.get(name) or {}
+        users_online = (
+            u.get("usersOnline") or u.get("onlineUsers") or u.get("users")
+            or n.get("usersOnline") or n.get("onlineUsers")
+        )
+        load = u.get("cpuPercent") or u.get("cpu") or n.get("cpuPercent")
+        extra = ""
+        if users_online is not None:
+            extra += f" · 👥 {users_online}"
+        if load is not None:
+            try:
+                extra += f" · CPU {float(load):.0f}%"
+            except (TypeError, ValueError):
+                pass
+        line = (texts.ADMIN_NODES_ONLINE if connected else texts.ADMIN_NODES_OFFLINE)
+        lines.append(line.format(name=f"{name}{extra}"))
     body = "\n".join(lines) if lines else texts.ADMIN_NODES_EMPTY
     await query.message.edit_text(
         texts.ADMIN_NODES.format(nodes=body, total=len(nodes), online=online),
