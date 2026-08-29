@@ -582,12 +582,19 @@ async def migrate_single_card(rt: Runtime) -> None:
     log.info("Migrated legacy card credentials to pay_cards table")
 
 
+SMART_SUM_RANGE = 10  # случайный рубль в диапазоне [base-10, base]
+
+
 async def smart_amount(rt: Runtime, base: float) -> float | None:
-    """Персональная пометка: base + случайные копейки, уникальные среди pending."""
+    """Персональная пометка: случайные целые рубли в пределах 10 ₽ ниже цены,
+    уникальные среди незавершённых заказов. Для 199 -> 189..199."""
     import random
 
-    for _ in range(60):
-        val = round(base + random.randint(1, 99) / 100.0, 2)
+    base_i = int(base)
+    low = max(1, base_i - SMART_SUM_RANGE)
+    candidates = [float(v) for v in range(low, base_i + 1)]
+    random.shuffle(candidates)
+    for val in candidates[:40]:
         if not await rt.db.smart_amount_taken(val):
             return val
     return None  # не смогли подобрать — вернём базовую цену

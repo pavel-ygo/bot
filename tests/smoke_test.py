@@ -516,14 +516,19 @@ async def test_multi_cards_and_smart():
         check("one disabled", len(enabled) == 2)
 
         # умная сумма: уникальные копейки, не равные базе
-        taken = set()
-        for _ in range(5):
-            val = await smart_amount(rt, 199.0)
-            check_args_ok = 199.01 <= val <= 199.99
-            assert check_args_ok, f"bad smart value {val}"
-            check("smart in (199.01..199.99)", True)
-            taken.add(val)
-        check("smart unique among pending", len(taken) == 5)
+        vals = [await smart_amount(rt, 199.0) for _ in range(8)]
+        for val in vals:
+            check("smart in [189..199]", 189.0 <= val <= 199.0 and val == int(val),
+                  f"(val={val})")
+        # записываем как pending — следующие вызовы не должны их выдавать
+        for i, v in enumerate(vals[:3]):
+            pid = await db.add_payment(3000 + i, "m1", "card", "199", "RUB")
+            await db._db.execute(
+                "UPDATE payments SET smart_amount = ? WHERE id = ?", (v, pid)
+            )
+        await db._db.commit()
+        v_next = await smart_amount(rt, 199.0)
+        check("smart avoids pending", v_next not in vals[:3], f"(next={v_next})")
 
         # smart_sum off -> берётся база (проверим уникальность не требуется)
         await db.set_setting("smart_sum", "0")

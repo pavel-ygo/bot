@@ -22,6 +22,7 @@ POLL_INTERVAL = 20          # сек между опросами платеже�
 REMINDER_INTERVAL = 6 * 3600  # как часто проверять сроки подписок
 BACKUP_INTERVAL = 24 * 3600   # раз в сутки
 REPORT_INTERVAL = 4 * 3600    # отчёт админу каждые 4 часа
+XLSX_REPORT_INTERVAL = 7 * 24 * 3600  # полный Excel-отчёт раз в неделю
 NODE_CHECK_INTERVAL = 300     # проверка нод каждые 5 минут
 BACKUP_KEEP = 7               # сколько копий хранить
 NUDGE_AFTER_MINUTES = 60      # напомнить о брошенной оплате через час
@@ -231,3 +232,28 @@ async def send_db_backup_to_admins(rt: Runtime, bot: Bot) -> None:
             )
         except Exception:
             pass
+
+
+async def weekly_xlsx_report(rt: Runtime, bot: Bot) -> None:
+    """Раз в неделю отправляет полный Excel-отчёт админам и в системный канал."""
+    from .handlers.admin_extra import _build_xlsx, _daily_revenue, _xlsx_data
+
+    await asyncio.sleep(600)  # даём боту полностью стартовать
+    while True:
+        try:
+            if rt.cfg.admin_ids:
+                data = await _xlsx_data(rt)
+                data["daily"] = await _daily_revenue(rt, days=7)
+                file = _build_xlsx(rt, data)
+                for admin_id in rt.cfg.admin_ids:
+                    try:
+                        await bot.send_document(
+                            admin_id, file,
+                            caption="📊 Недельный отчёт магазина (Excel)",
+                        )
+                    except Exception:
+                        pass
+                await sys_log(rt, bot, "📊 <b>Недельный Excel-отчёт отправлен</b> #отчёт")
+        except Exception:
+            log.exception("weekly xlsx report error")
+        await asyncio.sleep(XLSX_REPORT_INTERVAL)

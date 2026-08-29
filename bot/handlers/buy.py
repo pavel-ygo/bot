@@ -268,7 +268,7 @@ async def _issue_card_payment(rt: Runtime, query: CallbackQuery,
     )
     await rt.db._db.execute(
         "UPDATE payments SET smart_amount = ?, card_id = ? WHERE id = ?",
-        (value, card["id"], payment_id),
+        (int(value), card["id"], payment_id),
     )
     await rt.db._db.commit()
     await state.set_state(CardPayStates.waiting_receipt)

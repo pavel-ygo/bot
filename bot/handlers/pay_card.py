@@ -120,7 +120,7 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
     bot_user = await rt.db.get_bot_user(message.from_user.id) or {}
     name = bot_user.get("first_name") or bot_user.get("username") or str(message.from_user.id)
     pay_amount = float(payment["smart_amount"] or payment["amount"] or 0)
-    amount_str = f"{pay_amount:.2f}".rstrip("0").rstrip(".")
+    amount_str = f"{pay_amount:g}"
     admin_info = texts.CARD_TO_ADMIN.format(
         pid=pid,
         title=tariff.title if tariff else payment["tariff_id"],
