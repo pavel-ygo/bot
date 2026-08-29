@@ -320,12 +320,51 @@ async def test_tickets_and_refs():
         await db.close()
 
 
+async def test_card_provider():
+    print("оплата: способы и дефолты (карта вкл, stars/крипта выкл):")
+    from bot.config import Tariff
+    from bot.services import Runtime, card_settings
+
+    db = await Database.create("/tmp/test_bot5.db")
+    try:
+        cfg = load_config()
+        rt = Runtime(cfg=cfg, db=db, remna=None)
+        tariff = cfg.tariffs["m1"]
+
+        # без реквизитов карты способ недоступен
+        providers = await rt.available_providers(tariff)
+        check("card off without credentials", providers["card"] is False)
+        check("stars default off", providers["stars"] is False)
+        check("cryptobot default off", providers["cryptobot"] is False)
+
+        # задали реквизиты -> карта доступна
+        await rt.db.set_setting("card_number", "2202 2037 1234 5678")
+        await rt.db.set_setting("card_bank", "Т-Банк")
+        providers = await rt.available_providers(tariff)
+        check("card on with credentials", providers["card"] is True)
+        cs = await card_settings(rt)
+        check("card settings stored", cs["number"].endswith("5678") and cs["bank"] == "Т-Банк")
+
+        # выключили тумблером
+        await rt.db.set_setting("pay_card", "0")
+        providers = await rt.available_providers(tariff)
+        check("card toggle off", providers["card"] is False)
+
+        # stars включается админом
+        await rt.db.set_setting("pay_stars", "1")
+        providers = await rt.available_providers(tariff)
+        check("stars re-enabled", providers["stars"] is True)
+    finally:
+        await db.close()
+
+
 async def main():
     await test_utils()
     await test_db()
     await test_settings_and_promo()
     await test_promo_rules()
     await test_tickets_and_refs()
+    await test_card_provider()
     await test_create_path()
     await test_extend_path()
     await test_client_unwrap()

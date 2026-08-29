@@ -399,21 +399,24 @@ async def trial_days_input(message: Message, state: FSMContext, rt: Runtime):
 
 async def _pay_text_and_kb(rt: Runtime):
     configured = {
+        "card": bool(await rt.db.get_setting("card_number", "")),
+        "yookassa": rt.yookassa is not None and rt.cfg.yookassa_enabled,
         "stars": rt.cfg.stars_enabled,
         "cryptobot": rt.cryptobot is not None and rt.cfg.cryptobot_enabled,
-        "yookassa": rt.yookassa is not None and rt.cfg.yookassa_enabled,
     }
+    defaults = {"card": "1", "yookassa": "1", "stars": "0", "cryptobot": "0"}
     states = {
-        name: await rt.db.get_setting(f"pay_{name}", "1") == "1"
+        name: await rt.db.get_setting(f"pay_{name}", defaults[name]) == "1"
         for name in configured
     }
-    labels = {"stars": "Telegram Stars", "cryptobot": "CryptoBot (USDT)", "yookassa": "ЮKassa (карты)"}
+    labels = {"card": "Перевод на карту (ручное подтверждение)", "yookassa": "ЮKassa (карты)",
+              "stars": "Telegram Stars", "cryptobot": "CryptoBot (USDT)"}
     lines = "".join(
         texts.ADMIN_PAY_LINE.format(
             icon="✅" if states[name] else "❌", label=labels[name],
         )
         for name, conf in configured.items() if conf
-    ) or "ни один способ не сконфигурирован в .env"
+    ) or "ни один способ не настроен"
     return texts.ADMIN_PAY.format(list=lines), pay_toggles_menu(states, configured)
 
 

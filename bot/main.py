@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from .config import ConfigError, load_config
 from .db import Database
-from .handlers import admin, admin_extra, bonus, buy, support, user
+from .handlers import admin, admin_extra, bonus, buy, pay_card, support, user
 from .jobs import db_backup_loop, payment_poller, reminders_loop
 from .payments import CryptoBotProvider, YooKassaProvider
 from .remnawave import RemnawaveClient
@@ -59,6 +59,7 @@ async def main() -> None:
 
     dp.include_router(user.router)
     dp.include_router(buy.router)
+    dp.include_router(pay_card.router)
     dp.include_router(bonus.router)
     dp.include_router(admin.router)
     dp.include_router(admin_extra.router)

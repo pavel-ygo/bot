@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     LabeledPrice,
@@ -12,9 +13,9 @@ from aiogram.types import (
 )
 
 from .. import texts
-from ..keyboards import pay_link_menu, pay_methods_menu, tariffs_menu
+from ..keyboards import card_pay_menu, pay_link_menu, pay_methods_menu, tariffs_menu
 from ..payments import ProviderError
-from ..services import Runtime, complete_payment
+from ..services import Runtime, card_settings, complete_payment
 
 router = Router(name="buy")
 log = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ async def cb_tariff(query: CallbackQuery, rt: Runtime):
 
 
 @router.callback_query(F.data.startswith("pay:"))
-async def cb_pay(query: CallbackQuery, rt: Runtime, bot: Bot):
+async def cb_pay(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot):
     _, tariff_id, provider = query.data.split(":", 2)
     tariff = rt.cfg.tariffs.get(tariff_id)
     if tariff is None:
@@ -64,7 +65,28 @@ async def cb_pay(query: CallbackQuery, rt: Runtime, bot: Bot):
         return
     tg_id = query.from_user.id
 
-    if provider == "stars":
+    if provider == "card":
+        if not tariff.price_rub:
+            await query.answer("Оплата переводом недоступна для тарифа", show_alert=True)
+            return
+        cs = await card_settings(rt)
+        if not cs["number"]:
+            await query.answer("Реквизиты не настроены, выберите другой способ", show_alert=True)
+            return
+        payment_id = await rt.db.add_payment(
+            tg_id, tariff.id, "card", f"{tariff.price_rub:.2f}", "RUB"
+        )
+        from .pay_card import CardPayStates, _card_text
+
+        await state.set_state(CardPayStates.waiting_receipt)
+        await state.update_data(pid=payment_id)
+        await query.message.edit_text(
+            await _card_text(rt, tariff, tariff.price_rub),
+            reply_markup=card_pay_menu(payment_id),
+        )
+        await query.answer()
+
+    elif provider == "stars":
         if not tariff.price_stars:
             await query.answer("Оплата звёздами недоступна", show_alert=True)
             return

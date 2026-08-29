@@ -42,9 +42,10 @@ def tariffs_menu(tariffs: list) -> InlineKeyboardMarkup:
 
 def pay_methods_menu(tariff, providers: dict[str, bool]) -> InlineKeyboardMarkup:
     labels = {
+        "card": "🏦 Перевод на карту",
+        "yookassa": "💳 Карта онлайн (ЮKassa)",
         "stars": "⭐ Telegram Stars",
         "cryptobot": "🪙 Криптовалюта (USDT)",
-        "yookassa": "💳 Карта (ЮKassa)",
     }
     rows = []
     for name, available in providers.items():
@@ -110,6 +111,7 @@ def admin_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👤 Пользователь", callback_data="adm:user"),
         ],
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="adm:csv")],
+        [InlineKeyboardButton(text="🏦 Оплата на карту", callback_data="adm:card")],
     ])
 
 
@@ -189,16 +191,15 @@ def trial_settings_menu(enabled: bool) -> InlineKeyboardMarkup:
 
 
 def pay_toggles_menu(states: dict[str, bool], available: dict[str, bool]) -> InlineKeyboardMarkup:
-    labels = {"stars": "⭐ Telegram Stars", "cryptobot": "🪙 CryptoBot (USDT)",
-              "yookassa": "💳 ЮKassa (карты)"}
+    labels = {"card": "🏦 Перевод на карту", "yookassa": "💳 ЮKassa (карты)",
+              "stars": "⭐ Telegram Stars", "cryptobot": "🪙 CryptoBot (USDT)"}
     rows = []
-    for name in ("stars", "cryptobot", "yookassa"):
+    for name in ("card", "yookassa", "stars", "cryptobot"):
         if not available.get(name):
-            continue  # способ не сконфигурирован в .env — скрываем
+            continue  # способ не сконфигурирован — скрываем
         icon = "✅" if states.get(name) else "❌"
-        rows.append([InlineKeyboardButton(
-            text=f"{icon} {labels[name]}", callback_data=f"adm:pay:{name}",
-        )])
+        cb = "adm:card" if name == "card" else f"adm:pay:{name}"
+        rows.append([InlineKeyboardButton(text=f"{icon} {labels[name]}", callback_data=cb)])
     rows += admin_back().inline_keyboard
     return _kb(rows)
 
@@ -268,4 +269,40 @@ def user_card_menu(tg_id: int | None, rw_uuid: str | None, disabled: bool) -> In
             callback_data=f"adm:uc:toggle:{rw_uuid}",
         )])
     rows.append([InlineKeyboardButton(text="⬅️ В админку", callback_data="adm:main")])
+    return _kb(rows)
+
+
+# ── оплата на карту ────────────────────────────────────────────────────
+
+
+def card_pay_menu(payment_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="✅ Я оплатил(а)", callback_data=f"pc:sent:{payment_id}")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cxl:{payment_id}")],
+    ])
+
+
+def card_receipt_admin_menu(payment_id: int) -> InlineKeyboardMarkup:
+    return _kb([
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"pc:ok:{payment_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"pc:no:{payment_id}"),
+        ]
+    ])
+
+
+def admin_card_menu(enabled: bool, has_card: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text="⛔️ Выключить" if enabled else "✅ Включить", callback_data="adm:card:toggle",
+        )],
+        [InlineKeyboardButton(text="💳 Номер карты", callback_data="adm:card:num")],
+        [
+            InlineKeyboardButton(text="🏦 Банк", callback_data="adm:card:bank"),
+            InlineKeyboardButton(text="👤 Получатель", callback_data="adm:card:holder"),
+        ],
+    ]
+    if has_card:
+        rows.append([InlineKeyboardButton(text="🗑 Удалить реквизиты", callback_data="adm:card:del")])
+    rows += admin_back().inline_keyboard
     return _kb(rows)
