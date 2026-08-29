@@ -111,10 +111,22 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
         if not await rt.db.claim_payment(pid, "paid"):
             await message.answer(texts.CARD_ALREADY_DONE)
             return
-        await complete_payment(
+        delivered = await complete_payment(
             rt, bot, message.from_user.id, payment,
             success_prefix="💳 Чек получен — доступ открыт!",
         )
+        if not delivered:
+            # выдача не удалась: юзеру и админам уже ушли ошибки, платёж помечен error
+            for admin_id in rt.cfg.admin_ids:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"⚠️ Автоподтверждение #{pid}: оплата принята, но выдача не удалась "
+                        f"(см. логи). После исправления выдайте вручную: /admin → 🎁",
+                    )
+                except Exception:
+                    pass
+            return
         for admin_id in rt.cfg.admin_ids:
             try:
                 await bot.copy_message(admin_id, message.chat.id, message.message_id)
