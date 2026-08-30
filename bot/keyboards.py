@@ -166,16 +166,35 @@ def promo_detail_menu(promo: dict) -> InlineKeyboardMarkup:
 # ── рекламные кампании ─────────────────────────────────────────────────
 
 
-def campaign_list_menu(campaigns: list[dict]) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(
-            text=f"🗑 {c['name']}", callback_data=f"adm:camp:del:{c['id']}",
-        )]
-        for c in campaigns
-    ]
-    rows.append([InlineKeyboardButton(text="➕ Создать ссылку", callback_data="adm:camp:new")])
+def campaign_list_menu(campaigns: list[dict], stats: dict | None = None) -> InlineKeyboardMarkup:
+    stats = stats or {}
+    rows = []
+    for c in campaigns:
+        item = stats.get(c["name"], {})
+        label = (
+            f"📊 {c['name']} — {item.get('users', 0)}👤 / {item.get('paid', 0)}💳"
+            if item else f"📊 {c['name']}"
+        )
+        rows.append([
+            InlineKeyboardButton(text=label, callback_data=f"adm:camp:info:{c['id']}"),
+        ])
+    rows.append([
+        InlineKeyboardButton(text="➕ Создать ссылку", callback_data="adm:camp:new"),
+    ])
     rows += admin_back().inline_keyboard
     return _kb(rows)
+
+
+def campaign_detail_menu(campaign_id: int, name: str, bot_username: str) -> InlineKeyboardMarkup:
+    link = f"https://t.me/{bot_username}?start=ref_{name}"
+    return _kb([
+        [InlineKeyboardButton(text="🔗 Скопировать ссылку", url=link)],
+        [InlineKeyboardButton(
+            text="📋 Показать ссылку текстом", callback_data=f"adm:camp:link:{campaign_id}",
+        )],
+        [InlineKeyboardButton(text="🗑 Удалить кампанию", callback_data=f"adm:camp:del:{campaign_id}")],
+        [InlineKeyboardButton(text="⬅️ К списку", callback_data="adm:camp")],
+    ])
 
 
 # ── пробный период ─────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ from .. import texts
 from ..config import Tariff
 from ..keyboards import (
     alerts_menu,
+    campaign_detail_menu,
     csv_menu,
     sys_channel_menu,
     operators_menu,
@@ -243,9 +244,82 @@ async def _camp_list_text(rt: Runtime) -> str:
 async def cb_camp_list(query: CallbackQuery, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
+    campaigns = await rt.db.list_campaigns()
+    stats = await rt.db.campaign_stats()
     await query.message.edit_text(
         await _camp_list_text(rt),
-        reply_markup=campaign_list_menu(await rt.db.list_campaigns()),
+        reply_markup=campaign_list_menu(campaigns, stats),
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("adm:camp:info:"))
+async def cb_camp_info(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    cid = int(query.data.rsplit(":", 1)[1])
+    campaigns = await rt.db.list_campaigns()
+    camp = next((c for c in campaigns if c["id"] == cid), None)
+    if camp is None:
+        await query.answer("Кампания не найдена", show_alert=True)
+        return
+    name = camp["name"]
+    d = await rt.db.campaign_detail(name)
+
+    days_block = ""
+    if d["by_day"]:
+        days_block = texts.ADMIN_CAMP_DAYS_TITLE
+        days_block += "".join(
+            texts.ADMIN_CAMP_DAY_LINE.format(day=day, count=cnt)
+            for day, cnt in d["by_day"]
+        )
+
+    icons = {"delivered": "✅", "paid": "✅", "pending": "⏳",
+             "canceled": "❌", "error": "⚠️"}
+    status_ru = {"delivered": "выдана", "paid": "оплачена", "pending": "ожидает",
+                 "canceled": "отменена", "error": "ошибка"}
+    cur_sym = {"RUB": "₽", "XTR": "⭐", "USDT": "USDT"}
+    recent_block = ""
+    if d["recent"]:
+        recent_block = texts.ADMIN_CAMP_RECENT_TITLE
+        for pay in d["recent"]:
+            created = parse_iso(pay["created_at"])
+            recent_block += texts.ADMIN_CAMP_RECENT_LINE.format(
+                icon=icons.get(pay["status"], "•"), uid=pay["tg_id"],
+                amount=f"{pay['amount']}{cur_sym.get(pay['currency'], '')}",
+                status_ru=status_ru.get(pay["status"], pay["status"]),
+                date=fmt_date(created, rt.cfg.tz),
+            )
+
+    await query.message.edit_text(
+        texts.ADMIN_CAMP_DETAIL.format(
+            name=name, users=d["users"], paid=d["paid"], conv=d["conv"],
+            revenue=_revenue_str(await rt.db.campaign_stats_revenue(name)),
+            days_block=days_block, recent_block=recent_block,
+        ),
+        reply_markup=campaign_detail_menu(cid, name, rt.bot_username),
+        disable_web_page_preview=True,
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("adm:camp:link:"))
+async def cb_camp_link(query: CallbackQuery, rt: Runtime):
+    """Показ ссылки текстом — можно копировать сколько угодно раз."""
+    if not _is_admin(rt, query.from_user.id):
+        return
+    cid = int(query.data.rsplit(":", 1)[1])
+    campaigns = await rt.db.list_campaigns()
+    camp = next((c for c in campaigns if c["id"] == cid), None)
+    if camp is None:
+        await query.answer("Кампания не найдена", show_alert=True)
+        return
+    link = f"https://t.me/{rt.bot_username}?start=ref_{camp['name']}"
+    await query.message.answer(
+        f"🔗 <b>Ссылка кампании «{camp['name']}»</b> (нажмите, чтобы скопировать):\n"
+        f"<code>{link}</code>\n\n"
+        f"Можно копировать и использовать сколько угодно раз — все переходы "
+        f"по ней учитываются в этой кампании."
     )
     await query.answer()
 
@@ -256,7 +330,12 @@ async def cb_camp_delete(query: CallbackQuery, rt: Runtime):
         return
     await rt.db.delete_campaign(int(query.data.rsplit(":", 1)[1]))
     await query.answer(texts.ADMIN_CAMP_DELETED, show_alert=True)
-    await cb_camp_list(query, rt)
+    campaigns = await rt.db.list_campaigns()
+    stats = await rt.db.campaign_stats()
+    await query.message.edit_text(
+        await _camp_list_text(rt),
+        reply_markup=campaign_list_menu(campaigns, stats),
+    )
 
 
 @router.callback_query(F.data == "adm:camp:new")

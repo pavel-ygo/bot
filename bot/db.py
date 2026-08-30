@@ -577,6 +577,69 @@ class Database:
         ) as cur:
             return [r[0] for r in await cur.fetchall()]
 
+    async def campaign_detail(self, name: str) -> dict:
+        """Детальная воронка по одной кампании."""
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE source = ?", (name,)
+        ) as cur:
+            users = (await cur.fetchone())[0]
+
+        async with self._db.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(CASE WHEN currency='RUB'
+                        THEN CAST(amount AS REAL) END), 0)
+            FROM payments p JOIN bot_users b ON b.tg_id = p.tg_id
+            WHERE b.source = ? AND p.status IN ('paid','delivered')
+              AND p.provider IN ('stars','cryptobot','yookassa','card')
+            """,
+            (name,),
+        ) as cur:
+            row = await cur.fetchone()
+            paid, rub = row[0] or 0, row[1] or 0.0
+
+        # распределение новых юзеров по дням (14 дней)
+        async with self._db.execute(
+            """
+            SELECT substr(created_at, 1, 10) AS day, COUNT(*)
+            FROM bot_users WHERE source = ?
+              AND created_at >= datetime('now', '-14 days')
+            GROUP BY day ORDER BY day
+            """,
+            (name,),
+        ) as cur:
+            by_day = [(r[0], r[1]) for r in await cur.fetchall()]
+
+        # последние платежи этой кампании
+        async with self._db.execute(
+            """
+            SELECT p.tg_id, p.amount, p.currency, p.status, p.created_at, p.tariff_id
+            FROM payments p JOIN bot_users b ON b.tg_id = p.tg_id
+            WHERE b.source = ?
+            ORDER BY p.id DESC LIMIT 5
+            """,
+            (name,),
+        ) as cur:
+            recent = [dict(r) for r in await cur.fetchall()]
+
+        return {
+            "users": users, "paid": paid, "rub": rub,
+            "conv": f"{paid / users * 100:.0f}%" if users else "—",
+            "by_day": by_day, "recent": recent,
+        }
+
+    async def campaign_stats_revenue(self, name: str) -> dict:
+        async with self._db.execute(
+            """
+            SELECT p.currency, SUM(CAST(p.amount AS REAL))
+            FROM payments p JOIN bot_users b ON b.tg_id = p.tg_id
+            WHERE b.source = ? AND p.status IN ('paid','delivered')
+              AND p.provider IN ('stars','cryptobot','yookassa','card')
+            GROUP BY p.currency
+            """,
+            (name,),
+        ) as cur:
+            return {r[0]: (r[1] or 0) for r in await cur.fetchall()}
+
     async def referrals_total(self) -> int:
         async with self._db.execute(
             "SELECT COUNT(*) FROM bot_users WHERE referred_by IS NOT NULL"

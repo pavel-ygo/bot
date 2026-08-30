@@ -757,3 +757,22 @@ ADMIN_SYS_CHANNEL_CURRENT = "📢 Системный канал: <code>{channel}
 ADMIN_SYS_CHANNEL_NOT_SET = "Системный канал не задан"
 ADMIN_SYS_TEST_SENT = "✅ Тестовое сообщение отправлено в канал."
 ADMIN_SYS_TEST_FAIL = "❌ Не удалось отправить: {error}"
+
+
+# ── детальная статистика кампании ─────────────────────────────────────
+
+ADMIN_CAMP_DETAIL = (
+    "🔗 <b>Кампания «{name}»</b>\n\n"
+    "👥 Пришло: <b>{users}</b>\n"
+    "💳 Оплат: <b>{paid}</b>\n"
+    "📈 Конверсия: <b>{conv}</b>\n"
+    "💵 Выручка: <b>{revenue}</b>\n\n"
+    "{days_block}"
+    "{recent_block}"
+)
+ADMIN_CAMP_DAYS_TITLE = "📅 Новые юзеры по дням (14 дн.):\n"
+ADMIN_CAMP_DAY_LINE = "  {day}: {count}\n"
+ADMIN_CAMP_DAYS_EMPTY = ""
+ADMIN_CAMP_RECENT_TITLE = "\n🧾 Последние платежи:\n"
+ADMIN_CAMP_RECENT_LINE = "  {icon} <code>{uid}</code> — {amount} ({status_ru}) {date}\n"
+ADMIN_CAMP_NO_RECENT = ""
