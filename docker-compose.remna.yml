@@ -1,0 +1,24 @@
+# Подключает бота к docker-сети Remnawave, чтобы ходить в панель напрямую
+# по внутренней сети, без публичного домена и TLS:
+#   REMNAWAVE_PANEL_URL=http://remnawave:3000   (имя контейнера панели, порт 3000)
+#
+# Использование (из папки проекта):
+#   docker compose -f docker-compose.yml -f docker-compose.remna.yml up -d --build
+# либо добавьте один раз в .env строку — и пользуйтесь обычными командами `docker compose`:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.remna.yml
+#
+# Имя сети панели можно посмотреть так (обычно remnawave_network):
+#   docker network ls | grep -i remna
+# и переопределить в .env:
+#   REMNAWAVE_DOCKER_NETWORK=имя_сети
+
+services:
+  vpn-bot:
+    networks:
+      - default
+      - remna
+
+networks:
+  remna:
+    name: ${REMNAWAVE_DOCKER_NETWORK:-remnawave_network}
+    external: true
