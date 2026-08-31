@@ -39,7 +39,8 @@ async def _ensure_user(rt: Runtime, message_or_cb) -> None:
 async def _menu(rt: Runtime, show_trial: bool | None = None):
     if show_trial is None:
         tcfg = await trial_config(rt)
-        show_trial = bool(tcfg["enabled"] and tcfg["channel"])
+        # Кнопка видна, когда триал включён (канал опционален)
+        show_trial = bool(tcfg["enabled"])
     return main_menu(show_trial=show_trial)
 
 
