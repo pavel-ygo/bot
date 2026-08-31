@@ -8,21 +8,30 @@ def _kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu(*, show_trial: bool = False) -> InlineKeyboardMarkup:
+def main_menu(*, show_trial: bool = False, hero_trial: bool = False) -> InlineKeyboardMarkup:
+    rows = []
+    if hero_trial:
+        rows.append([InlineKeyboardButton(
+            text="🎁 Забрать 3 дня бесплатно", callback_data="trial",
+        )])
+        rows.append([InlineKeyboardButton(
+            text="🔑 Купить подписку (от 199₽/мес)", callback_data="buy",
+        )])
+    else:
+        rows.append([InlineKeyboardButton(text="🔑 Купить подписку", callback_data="buy")])
+        rows.append([InlineKeyboardButton(text="💳 Моя подписка", callback_data="menu:sub")])
     bonus_row: list[InlineKeyboardButton] = [
         InlineKeyboardButton(text="🎫 Промокод", callback_data="promo")
     ]
-    if show_trial:
+    if show_trial and not hero_trial:
         bonus_row.append(InlineKeyboardButton(text="🎁 Пробный период", callback_data="trial"))
-    rows = [
-        [InlineKeyboardButton(text="🔑 Купить подписку", callback_data="buy")],
-        [InlineKeyboardButton(text="💳 Моя подписка", callback_data="menu:sub")],
-        bonus_row,
-        [InlineKeyboardButton(text="👥 Друзья", callback_data="ref"),
-         InlineKeyboardButton(text="❓ FAQ", callback_data="menu:faq")],
-        [InlineKeyboardButton(text="📖 Как подключиться", callback_data="menu:help")],
-        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
-    ]
+    rows.append(bonus_row)
+    rows.append([
+        InlineKeyboardButton(text="👥 Друзья", callback_data="ref"),
+        InlineKeyboardButton(text="❓ FAQ", callback_data="menu:faq"),
+    ])
+    rows.append([InlineKeyboardButton(text="📖 Как подключиться", callback_data="menu:help")])
+    rows.append([InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")])
     return _kb(rows)
 
 

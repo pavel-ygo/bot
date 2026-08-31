@@ -36,24 +36,27 @@ async def _ensure_user(rt: Runtime, message_or_cb) -> None:
         )
 
 
-async def _menu(rt: Runtime, show_trial: bool | None = None):
+async def _menu(rt: Runtime, show_trial: bool | None = None,
+                hero_trial: bool = False):
     if show_trial is None:
         tcfg = await trial_config(rt)
         # Кнопка видна, когда триал включён (канал опционален)
         show_trial = bool(tcfg["enabled"])
-    return main_menu(show_trial=show_trial)
+    return main_menu(show_trial=show_trial, hero_trial=hero_trial)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, rt: Runtime, bot: Bot):
     source = None
     referred_by = None
+    from_ad = False
     args = (message.text or "").split(maxsplit=1)
     if len(args) > 1:
         payload = args[1].strip()
         m = REF_RE.match(payload)
         if m:
             source = m.group(1)
+            from_ad = True
         else:
             m = USER_REF_RE.match(payload)
             if m:
@@ -67,6 +70,13 @@ async def cmd_start(message: Message, rt: Runtime, bot: Bot):
             rt, bot, message.from_user.id,
             message.from_user.first_name or "—", source, referred_by,
         )
+
+    tcfg = await trial_config(rt)
+    hero = bool(from_ad and tcfg["enabled"] and not await rt.db.trial_used(message.from_user.id))
+    start_text = (
+        texts.START_REF.format(name=message.from_user.first_name or "друг")
+        if hero else texts.START.format(name=message.from_user.first_name or "друг")
+    )
     if created and rt.cfg.admin_ids:
         for admin_id in rt.cfg.admin_ids:
             try:
@@ -80,8 +90,8 @@ async def cmd_start(message: Message, rt: Runtime, bot: Bot):
             except Exception:
                 pass
     await message.answer(
-        texts.START.format(name=message.from_user.first_name or "друг"),
-        reply_markup=await _menu(rt),
+        start_text,
+        reply_markup=await _menu(rt, hero_trial=hero),
         disable_web_page_preview=True,
     )
 

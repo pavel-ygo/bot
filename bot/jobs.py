@@ -9,11 +9,11 @@ from pathlib import Path
 from aiogram import Bot
 
 from . import texts
-from .keyboards import payment_nudge_menu
+from .keyboards import main_menu, payment_nudge_menu
 from .payments import ProviderError
 from .services import Runtime, check_reminders, complete_payment, sys_log
 from .handlers.buy import _check_external
-from .texts import NUDGE_USER, SYS_BACKUP, SYS_NODE_DOWN, SYS_NODE_UP
+from .texts import NUDGE_USER, SYS_BACKUP, SYS_NODE_DOWN, SYS_NODE_UP, TRIAL_MIDWAY
 from .utils import parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -257,3 +257,44 @@ async def weekly_xlsx_report(rt: Runtime, bot: Bot) -> None:
         except Exception:
             log.exception("weekly xlsx report error")
         await asyncio.sleep(XLSX_REPORT_INTERVAL)
+
+
+async def trial_midway_nudge(rt: Runtime, bot: Bot) -> None:
+    """Через ~24ч после активации триала напоминает: осталось 2 дня."""
+    await asyncio.sleep(3600)
+    while True:
+        try:
+            enabled = await rt.db.get_setting("trial_midway", "1") == "1"
+            if enabled:
+                async for rw_user in rt.remna.iter_users():
+                    tag = rw_user.get("tag") or ""
+                    if "trial" not in str(tag):
+                        continue
+                    expire = parse_iso(rw_user.get("expireAt"))
+                    if not expire:
+                        continue
+                    left_h = (expire - utcnow()).total_seconds() / 3600
+                    if not (36 <= left_h <= 54):  # примерно середина 3-дневного триала
+                        continue
+                    tg_raw = rw_user.get("telegramId")
+                    if not tg_raw:
+                        continue
+                    try:
+                        tg_id = int(tg_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    last = await rt.db.get_reminder(tg_id)
+                    if last == "trial_mid":
+                        continue
+                    try:
+                        await bot.send_message(
+                            tg_id,
+                            TRIAL_MIDWAY,
+                            reply_markup=main_menu(),
+                        )
+                        await rt.db.set_reminder(tg_id, "trial_mid")
+                    except Exception:
+                        continue
+        except Exception:
+            log.exception("trial midway nudge error")
+        await asyncio.sleep(6 * 3600)
