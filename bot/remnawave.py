@@ -104,6 +104,7 @@ class RemnawaveClient:
         email: str | None = None,
         description: str | None = None,
         tag: str | None = None,
+        traffic_limit_bytes: int | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "username": username,
@@ -118,6 +119,9 @@ class RemnawaveClient:
             payload["description"] = description
         if tag:
             payload["tag"] = tag
+        if traffic_limit_bytes:
+            payload["trafficLimitBytes"] = traffic_limit_bytes
+            payload["trafficLimitStrategy"] = "NO_RESET"
         return await self._request("POST", "/users", json=payload)
 
     async def update_user(self, uuid: str, **fields: Any) -> dict:

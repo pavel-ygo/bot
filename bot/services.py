@@ -193,7 +193,8 @@ async def panel_card_fields(rt: Runtime, tg_id: int | None, tariff: Tariff) -> d
 
 
 async def deliver_subscription(
-    rt: Runtime, tg_id: int | None, tariff: Tariff, *, existing: dict | None = None
+    rt: Runtime, tg_id: int | None, tariff: Tariff, *, existing: dict | None = None,
+    traffic_limit_bytes: int | None = None,
 ) -> tuple[str, str | None]:
     """Находит или создаёт пользователя Remnawave и продлевает подписку на tariff.days.
 
@@ -247,6 +248,7 @@ async def deliver_subscription(
             "expire_at": to_iso(now + timedelta(days=tariff.days)),
             "squad_uuids": [squad],
             "telegram_id": tg_id,
+            "traffic_limit_bytes": traffic_limit_bytes,
         }
         full_payload = {
             **base_payload,
@@ -262,8 +264,7 @@ async def deliver_subscription(
             if e.status == 409:  # имя занято — пробуем с суффиксом
                 continue
             if e.status == 400:
-                # панель не приняла доп. поля (email/description/tag) —
-                # пробуем без email, затем минимальный payload
+                # панель не приняла доп. поля — пробуем без email, затем минимум
                 try:
                     created = await rt.remna.create_user(
                         **{**base_payload, "description": card["description"],
@@ -491,7 +492,10 @@ async def check_reminders(rt: Runtime, bot: Bot) -> tuple[int, int]:
 
 
 async def trial_config(rt: Runtime) -> dict:
-    """Настройки пробного периода: из БД (админка) с фолбэком на .env."""
+    """Настройки пробного периода: из БД (админка) с фолбэком на .env.
+
+    channel может быть пустым — тогда триал выдаётся без проверки подписки.
+    """
     db = rt.db
     channel = await db.get_setting("trial_channel", rt.cfg.trial_channel or "")
     url = await db.get_setting("trial_channel_url", rt.cfg.trial_channel_url or "")
@@ -499,12 +503,17 @@ async def trial_config(rt: Runtime) -> dict:
         days = int(await db.get_setting("trial_days", str(rt.cfg.trial_days)) or 1)
     except ValueError:
         days = rt.cfg.trial_days
+    try:
+        traffic_gb = int(await db.get_setting("trial_traffic_gb", "15"))
+    except ValueError:
+        traffic_gb = 15
     enabled = (await db.get_setting("trial_enabled", "1")) == "1"
     return {
         "enabled": enabled,
         "channel": channel.strip() or None,
         "url": url.strip() or None,
         "days": max(1, days),
+        "traffic_gb": max(1, traffic_gb),
     }
 
 

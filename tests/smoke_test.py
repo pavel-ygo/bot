@@ -170,6 +170,25 @@ async def test_settings_and_promo():
         await db.close()
 
 
+async def test_trial_config_traffic():
+    print("trial: конфиг с лимитом трафика:")
+    from bot.services import trial_config
+
+    db = await Database.create("/tmp/test_trial.db")
+    try:
+        cfg = load_config()
+        rt = Runtime(cfg=cfg, db=db, remna=None)
+        tcfg = await trial_config(rt)
+        check("trial defaults", tcfg["days"] >= 1 and tcfg["traffic_gb"] >= 1)
+        await db.set_setting("trial_days", "3")
+        await db.set_setting("trial_traffic_gb", "15")
+        tcfg = await trial_config(rt)
+        check("trial 3 days 15gb", tcfg["days"] == 3 and tcfg["traffic_gb"] == 15)
+        check("trial channel optional", tcfg["channel"] in (None, ""))
+    finally:
+        await db.close()
+
+
 async def test_promo_rules():
     print("db: правила промокодов и trial:")
     from datetime import timedelta
@@ -226,6 +245,14 @@ async def test_create_path():
           bool(fake.created.get("email")))
     check("tag paid", fake.created.get("tag") == "tgbot|paid")
     check("description с источником", "Источник: напрямую" in (fake.created.get("description") or ""))
+
+    # триал с лимитом трафика 15 ГБ (после проверок карточки основного юзера)
+    trial_t = Tariff(id="trial", title="Пробный", days=3, description="")
+    _, _ = await deliver_subscription(rt, 555001, trial_t,
+                                      traffic_limit_bytes=15 * 1024 ** 3)
+    check("trial user created", (fake.created or {}).get("username", "").startswith("tg555001"))
+    check("trafficLimitBytes sent", fake.created.get("trafficLimitBytes") == 15 * 1024 ** 3)
+    check("strategy NO_RESET", fake.created.get("trafficLimitStrategy") == "NO_RESET")
     await rt.db.close()
     await fake.aclose()
 
@@ -547,6 +574,7 @@ async def main():
     await test_utils()
     await test_db()
     await test_settings_and_promo()
+    await test_trial_config_traffic()
     await test_promo_rules()
     await test_tickets_and_refs()
     await test_card_provider()

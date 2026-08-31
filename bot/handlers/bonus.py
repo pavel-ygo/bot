@@ -109,8 +109,11 @@ async def promo_input(message: Message, state: FSMContext, rt: Runtime, bot: Bot
 
 async def _grant_trial(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict) -> None:
     tariff = Tariff(id="trial", title="Пробный период", days=tcfg["days"], description="")
+    traffic_limit = tcfg["traffic_gb"] * (1024 ** 3) if tcfg.get("traffic_gb") else None
     try:
-        result_text, url = await deliver_subscription(rt, query.from_user.id, tariff)
+        result_text, url = await deliver_subscription(
+            rt, query.from_user.id, tariff, traffic_limit_bytes=traffic_limit
+        )
     except Exception as e:
         log.exception("trial delivery failed: %s", e)
         await query.message.answer(texts.ERROR_DELIVERY)
@@ -118,10 +121,17 @@ async def _grant_trial(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict) 
     await rt.db.mark_trial_used(query.from_user.id)
     await rt.db.add_payment(
         query.from_user.id, "trial", "trial", "0", "-",
-        status="delivered", note=f"trial {tcfg['days']}d",
+        status="delivered", note=f"trial {tcfg['days']}d / {tcfg['traffic_gb']}gb",
+    )
+    done_text = (
+        texts.TRIAL_OK_LIMITED.format(
+            days=tcfg["days"], traffic_gb=tcfg["traffic_gb"], result=result_text,
+        )
+        if traffic_limit
+        else texts.TRIAL_OK.format(days=tcfg["days"], result=result_text)
     )
     await query.message.edit_text(
-        texts.TRIAL_OK.format(days=tcfg["days"], result=result_text),
+        done_text,
         reply_markup=subscription_kb(url),
         disable_web_page_preview=True,
     )
@@ -151,11 +161,24 @@ async def _trial_check(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict) 
 @router.callback_query(F.data == "trial")
 async def cb_trial(query: CallbackQuery, rt: Runtime, bot: Bot):
     tcfg = await trial_config(rt)
-    if not tcfg["enabled"] or not tcfg["channel"]:
+    if not tcfg["enabled"]:
         await query.answer(texts.TRIAL_DISABLED, show_alert=True)
         return
     if await rt.db.trial_used(query.from_user.id):
         await query.answer(texts.TRIAL_ALREADY, show_alert=True)
+        return
+
+    # Канал не задан — выдаём без проверки подписки (сначала экран-подтверждение)
+    if not tcfg["channel"]:
+        rows = [[InlineKeyboardButton(
+            text="🎉 Получить бесплатно", callback_data="trial:free",
+        )]]
+        rows += back_to_menu()
+        await query.message.edit_text(
+            texts.TRIAL_ASK_FREE.format(days=tcfg["days"], traffic_gb=tcfg["traffic_gb"]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+        await query.answer()
         return
 
     rows: list[list[InlineKeyboardButton]] = []
@@ -164,7 +187,7 @@ async def cb_trial(query: CallbackQuery, rt: Runtime, bot: Bot):
     rows.append([InlineKeyboardButton(text="✅ Я подписался", callback_data="trial:check")])
     rows += back_to_menu()
 
-    member = await is_channel_member(bot, tcfg["channel"], query.from_user.id)
+    member = await is_channel_member(bot, tcfg["channel"], query.from_user.id)  # noqa: F841
     if member:
         await query.answer()
         await _grant_trial(rt, bot, query, tcfg)
@@ -174,6 +197,19 @@ async def cb_trial(query: CallbackQuery, rt: Runtime, bot: Bot):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await query.answer()
+
+
+@router.callback_query(F.data == "trial:free")
+async def cb_trial_free(query: CallbackQuery, rt: Runtime, bot: Bot):
+    tcfg = await trial_config(rt)
+    if not tcfg["enabled"]:
+        await query.answer(texts.TRIAL_DISABLED, show_alert=True)
+        return
+    if await rt.db.trial_used(query.from_user.id):
+        await query.answer(texts.TRIAL_ALREADY, show_alert=True)
+        return
+    await query.answer()
+    await _grant_trial(rt, bot, query, tcfg)
 
 
 @router.callback_query(F.data == "trial:check")
