@@ -13,7 +13,8 @@ from .keyboards import main_menu, payment_nudge_menu
 from .payments import ProviderError
 from .services import Runtime, check_reminders, complete_payment, sys_log
 from .handlers.buy import _check_external
-from .texts import NUDGE_USER, SYS_BACKUP, SYS_NODE_DOWN, SYS_NODE_UP, TRIAL_MIDWAY
+from .texts import (ACTIVATE_NOT_ACTIVATED, NUDGE_USER, SYS_BACKUP,
+                    SYS_NODE_DOWN, SYS_NODE_UP, TRIAL_MIDWAY)
 from .utils import parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -298,3 +299,51 @@ async def trial_midway_nudge(rt: Runtime, bot: Bot) -> None:
         except Exception:
             log.exception("trial midway nudge error")
         await asyncio.sleep(6 * 3600)
+
+
+async def activation_nudge(rt: Runtime, bot: Bot) -> None:
+    """Проверяет триал-юзеров, которые взяли доступ, но не открыли подписку.
+
+    Remnawave показывает факт активации через subLastOpenedAt / subscription
+    request history. Шлём подсказку через ~2 часа после выдачи.
+    """
+    await asyncio.sleep(420)
+    while True:
+        try:
+            enabled = await rt.db.get_setting("activation_nudge", "1") == "1"
+            if enabled:
+                async for rw_user in rt.remna.iter_users():
+                    tag = str(rw_user.get("tag") or "")
+                    if "trial" not in tag:
+                        continue
+                    # уже открывал подписку — активен, пропускаем
+                    if rw_user.get("subLastOpenedAt") or rw_user.get("subLastUserAgent"):
+                        continue
+                    created = parse_iso(rw_user.get("createdAt"))
+                    if not created:
+                        continue
+                    hours = (utcnow() - created).total_seconds() / 3600
+                    if not (1.5 <= hours <= 24):  # окно: напомнить один раз
+                        continue
+                    tg_raw = rw_user.get("telegramId")
+                    if not tg_raw:
+                        continue
+                    try:
+                        tg_id = int(tg_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    last = await rt.db.get_reminder(tg_id)
+                    if last == "activate":
+                        continue
+                    try:
+                        await bot.send_message(
+                            tg_id,
+                            ACTIVATE_NOT_ACTIVATED,
+                            reply_markup=main_menu(),
+                        )
+                        await rt.db.set_reminder(tg_id, "activate")
+                    except Exception:
+                        continue
+        except Exception:
+            log.exception("activation nudge error")
+        await asyncio.sleep(3 * 3600)

@@ -555,3 +555,11 @@ def trial_bonus_check_menu(channel_url: str | None) -> InlineKeyboardMarkup:
                                       callback_data="trial:bonus")])
     rows += back_to_menu()
     return _kb(rows)
+
+
+def activate_guide_menu(sub_url: str) -> InlineKeyboardMarkup:
+    return _kb([
+        [InlineKeyboardButton(text="🔗 Открыть мою подписку", url=sub_url)],
+        [InlineKeyboardButton(text="❓ Как подключиться (подробно)", callback_data="menu:help")],
+        [InlineKeyboardButton(text="🆘 Написать в поддержку", callback_data="support")],
+    ])

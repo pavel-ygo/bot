@@ -341,6 +341,20 @@ async def complete_payment(
     except Exception as e:
         log.warning("Не удалось отправить сообщение %s: %s", tg_id, e)
 
+    # для триала сразу отправляем гайд активации (главная точка потери юзеров)
+    if payment.get("provider") == "trial" and sub_url:
+        from .keyboards import activate_guide_menu
+
+        try:
+            await bot.send_message(
+                tg_id,
+                texts.ACTIVATE_GUIDE,
+                reply_markup=activate_guide_menu(sub_url),
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            log.warning("activation guide to %s: %s", tg_id, e)
+
     await _notify_payment(rt, bot, tg_id, payment)
     await _credit_referral(rt, bot, tg_id, payment)
     return True
