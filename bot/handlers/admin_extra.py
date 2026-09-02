@@ -392,17 +392,28 @@ class TrialFSM(StatesGroup):
     channel = State()
     url = State()
     days = State()
+    bonus_days = State()
+    traffic = State()
 
 
 async def _trial_text_and_kb(rt: Runtime):
     tcfg = await trial_config(rt)
     used = await rt.db.trials_count()
-    text = texts.ADMIN_TRIAL.format(
-        status=texts.ADMIN_TRIAL_ON if tcfg["enabled"] else texts.ADMIN_TRIAL_OFF,
-        days=tcfg["days"],
-        channel=tcfg["channel"] or "не задан",
-        url=tcfg["url"] or "не задана",
-        used=used,
+    channel_note = (
+        tcfg["channel"] if tcfg["channel"]
+        else "не задан → триал всем, БЕЗ подписки"
+    )
+    text = (
+        "🎁 <b>Пробный период</b>\n\n"
+        f"Статус: {texts.ADMIN_TRIAL_ON if tcfg['enabled'] else texts.ADMIN_TRIAL_OFF}\n"
+        f"Сразу при активации: <b>{tcfg['days']} дн.</b>\n"
+        f"Бонус за подписку на канал: <b>+{tcfg['bonus_days']} дн.</b>\n"
+        f"Лимит трафика: <b>{tcfg['traffic_gb']} ГБ</b>\n"
+        f"Канал: <code>{channel_note}</code>\n"
+        f"Ссылка: <code>{tcfg['url'] or 'не задана'}</code>\n"
+        f"Активировали: <b>{used}</b> чел.\n\n"
+        "Схема: юзер получает базовые дни сразу. Если канал задан — может получить "
+        f"ещё +{tcfg['bonus_days']} дн., подписавшись на канал (бот проверяет автоматически)."
     )
     return text, trial_settings_menu(tcfg["enabled"])
 
@@ -473,6 +484,60 @@ async def trial_url_input(message: Message, state: FSMContext, rt: Runtime):
     await rt.db.set_setting("trial_channel_url", url)
     await message.answer(
         texts.ADMIN_TRIAL_SET_OK.format(key="ссылка", value=url),
+        reply_markup=admin_menu(),
+    )
+
+
+@router.callback_query(F.data == "adm:trial:bonus")
+async def cb_trial_bonus_days(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(TrialFSM.bonus_days)
+    await query.message.edit_text(
+        "Сколько бонусных дней давать за подписку на канал? Пришлите число (0 — выключить бонус)."
+    )
+    await query.answer()
+
+
+@router.message(TrialFSM.bonus_days)
+async def trial_bonus_days_input(message: Message, state: FSMContext, rt: Runtime):
+    raw = (message.text or "").strip()
+    await state.clear()
+    if raw.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not raw.isdigit() or int(raw) > 365:
+        await message.answer("Число от 0 до 365. Попробуйте ещё раз:")
+        return
+    await rt.db.set_setting("trial_bonus_days", raw)
+    await message.answer(
+        texts.ADMIN_TRIAL_SET_OK.format(key="бонус за подписку", value=f"+{raw} дн."),
+        reply_markup=admin_menu(),
+    )
+
+
+@router.callback_query(F.data == "adm:trial:traffic")
+async def cb_trial_traffic(query: CallbackQuery, state: FSMContext, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    await state.set_state(TrialFSM.traffic)
+    await query.message.edit_text(
+        "Лимит трафика пробного периода в ГБ. Пришлите число (например 15)."
+    )
+    await query.answer()
+
+
+@router.message(TrialFSM.traffic)
+async def trial_traffic_input(message: Message, state: FSMContext, rt: Runtime):
+    raw = (message.text or "").strip()
+    await state.clear()
+    if raw.lower() == "/cancel":
+        return await message.answer("Отменено.", reply_markup=admin_menu())
+    if not raw.isdigit() or not (1 <= int(raw) <= 10000):
+        await message.answer("Число ГБ от 1 до 10000. Попробуйте ещё раз:")
+        return
+    await rt.db.set_setting("trial_traffic_gb", raw)
+    await message.answer(
+        texts.ADMIN_TRIAL_SET_OK.format(key="лимит трафика", value=f"{raw} ГБ"),
         reply_markup=admin_menu(),
     )
 

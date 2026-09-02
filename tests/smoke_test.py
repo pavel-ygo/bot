@@ -180,11 +180,19 @@ async def test_trial_config_traffic():
         rt = Runtime(cfg=cfg, db=db, remna=None)
         tcfg = await trial_config(rt)
         check("trial defaults", tcfg["days"] >= 1 and tcfg["traffic_gb"] >= 1)
-        await db.set_setting("trial_days", "3")
+        await db.set_setting("trial_days", "1")
+        await db.set_setting("trial_bonus_days", "2")
         await db.set_setting("trial_traffic_gb", "15")
         tcfg = await trial_config(rt)
-        check("trial 3 days 15gb", tcfg["days"] == 3 and tcfg["traffic_gb"] == 15)
+        check("trial 1+2 15gb",
+              tcfg["days"] == 1 and tcfg["bonus_days"] == 2 and tcfg["traffic_gb"] == 15)
         check("trial channel optional", tcfg["channel"] in (None, ""))
+
+        # флаги бонуса
+        await db.upsert_bot_user(600, "tb", "TB")
+        check("bonus not given yet", not await rt.db.trial_bonus_given(600))
+        await rt.db.mark_trial_bonus_given(600)
+        check("bonus given", await rt.db.trial_bonus_given(600))
     finally:
         await db.close()
 

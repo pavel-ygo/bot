@@ -218,7 +218,11 @@ def trial_settings_menu(enabled: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📣 Канал", callback_data="adm:trial:chan"),
             InlineKeyboardButton(text="🔗 Ссылка", callback_data="adm:trial:url"),
         ],
-        [InlineKeyboardButton(text="📅 Срок (дни)", callback_data="adm:trial:days")],
+        [
+            InlineKeyboardButton(text="📅 Базовые дни", callback_data="adm:trial:days"),
+            InlineKeyboardButton(text="🔥 Бонус за подписку", callback_data="adm:trial:bonus"),
+        ],
+        [InlineKeyboardButton(text="📊 Лимит трафика (ГБ)", callback_data="adm:trial:traffic")],
         *admin_back().inline_keyboard,
     ])
 
@@ -526,3 +530,28 @@ def card_admin_detail_menu(card: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm:card2:del:{card['id']}")],
         [InlineKeyboardButton(text="⬅️ К списку карт", callback_data="adm:card")],
     ])
+
+
+def trial_free_menu(days: int, bonus_days: int, channel_url: str | None) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"🎉 Забрать {days} дн. бесплатно",
+                                  callback_data="trial:free")]]
+    if bonus_days and channel_url:
+        rows.append([InlineKeyboardButton(text=f"🔥 +{bonus_days} дн. за подписку на канал",
+                                          url=channel_url)])
+    if bonus_days:
+        rows.append([InlineKeyboardButton(
+            text=f"🔥 У меня подписка — дать +{bonus_days} дн.",
+            callback_data="trial:bonus",
+        )])
+    rows += back_to_menu()
+    return _kb(rows)
+
+
+def trial_bonus_check_menu(channel_url: str | None) -> InlineKeyboardMarkup:
+    rows = []
+    if channel_url:
+        rows.append([InlineKeyboardButton(text="📢 Подписаться на канал", url=channel_url)])
+    rows.append([InlineKeyboardButton(text="✅ Я подписался — дать дни",
+                                      callback_data="trial:bonus")])
+    rows += back_to_menu()
+    return _kb(rows)

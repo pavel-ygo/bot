@@ -507,6 +507,10 @@ async def trial_config(rt: Runtime) -> dict:
         traffic_gb = int(await db.get_setting("trial_traffic_gb", "15"))
     except ValueError:
         traffic_gb = 15
+    try:
+        bonus_days = int(await db.get_setting("trial_bonus_days", str(rt.cfg.trial_bonus_days)))
+    except ValueError:
+        bonus_days = rt.cfg.trial_bonus_days
     enabled = (await db.get_setting("trial_enabled", "1")) == "1"
     return {
         "enabled": enabled,
@@ -514,6 +518,7 @@ async def trial_config(rt: Runtime) -> dict:
         "url": url.strip() or None,
         "days": max(1, days),
         "traffic_gb": max(1, traffic_gb),
+        "bonus_days": max(0, bonus_days),
     }
 
 

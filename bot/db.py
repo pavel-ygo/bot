@@ -143,6 +143,10 @@ class Database:
             )
         if not await has_col("payments", "source"):
             await self._db.execute("ALTER TABLE payments ADD COLUMN source TEXT")
+        if not await has_col("bot_users", "trial_bonus_given"):
+            await self._db.execute(
+                "ALTER TABLE bot_users ADD COLUMN trial_bonus_given INTEGER NOT NULL DEFAULT 0"
+            )
         if not await has_col("bot_users", "referred_by"):
             await self._db.execute("ALTER TABLE bot_users ADD COLUMN referred_by TEXT")
         if not await has_col("payments", "card_id"):
@@ -239,6 +243,19 @@ class Database:
         ) as cur:
             row = await cur.fetchone()
             return bool(row and row[0])
+
+    async def trial_bonus_given(self, tg_id: int) -> bool:
+        async with self._db.execute(
+            "SELECT trial_bonus_given FROM bot_users WHERE tg_id = ?", (tg_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return bool(row and row[0])
+
+    async def mark_trial_bonus_given(self, tg_id: int) -> None:
+        await self._db.execute(
+            "UPDATE bot_users SET trial_bonus_given = 1 WHERE tg_id = ?", (tg_id,)
+        )
+        await self._db.commit()
 
     async def mark_trial_used(self, tg_id: int) -> None:
         await self._db.execute(
