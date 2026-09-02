@@ -1294,7 +1294,8 @@ async def cb_tariff_delete(query: CallbackQuery, rt: Runtime):
 async def cb_tariff_edit(query: CallbackQuery, state: FSMContext, rt: Runtime):
     if not _is_admin(rt, query.from_user.id):
         return
-    _, _, tid, field = query.data.split(":")
+    parts = query.data.split(":")
+    tid, field = parts[3], parts[4]
     if tid not in rt.cfg.tariffs or field not in texts.ADMIN_TARIFF_EDIT_ASK:
         await query.answer("Не найдено", show_alert=True)
         return
