@@ -352,8 +352,11 @@ async def complete_payment(
                 reply_markup=activate_guide_menu(sub_url),
                 disable_web_page_preview=True,
             )
+            await rt.db.log_event(tg_id, "guide_sent")
         except Exception as e:
             log.warning("activation guide to %s: %s", tg_id, e)
+    else:
+        await rt.db.log_event(tg_id, "purchase_completed", payment.get("provider", ""))
 
     await _notify_payment(rt, bot, tg_id, payment)
     await _credit_referral(rt, bot, tg_id, payment)
@@ -654,3 +657,31 @@ async def sys_new_user(rt: Runtime, bot: Bot, tg_id: int, name: str,
     """Публикует событие о новом пользователе в системный канал."""
     src = source or (f"реферал {referred_by}" if referred_by else "напрямую")
     await sys_log(rt, bot, texts.SYS_NEW_USER.format(name=name, uid=tg_id, source=src))
+
+
+FUNNEL_ORDER = [
+    ("user_started", "Пришли в бота"),
+    ("trial_issued", "Взяли триал"),
+    ("guide_sent", "Получили инструкцию"),
+    ("sub_opened", "Открыли подписку"),
+    ("traffic_started", "Пустили трафик"),
+    ("purchase_completed", "Купили подписку"),
+]
+
+
+async def funnel_text(rt: Runtime, days: int) -> str:
+    lines = [f"📊 <b>Воронка за {days} дн.</b>\n"]
+    prev = None
+    for key, label in FUNNEL_ORDER:
+        if key == "user_started":
+            val = await rt.db.users_count_since(days)
+        elif key == "purchase_completed":
+            val = await rt.db.paid_users_count_since(days)
+        else:
+            val = await rt.db.events_count_since(key, days)
+        pct = ""
+        if prev is not None and prev > 0:
+            pct = f" ({val / prev * 100:.0f}%)"
+        lines.append(f"{'└' if key == FUNNEL_ORDER[-1][0] else '├'} {label}: <b>{val}</b>{pct}")
+        prev = val
+    return "\n".join(lines)

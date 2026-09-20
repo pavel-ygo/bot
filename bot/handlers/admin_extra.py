@@ -15,6 +15,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from .. import texts
 from ..config import Tariff
 from ..keyboards import (
+    admin_back,
     alerts_menu,
     campaign_detail_menu,
     csv_menu,
@@ -34,6 +35,7 @@ from ..remnawave import RemnaError
 from ..services import (
     Runtime,
     deliver_subscription,
+    funnel_text,
     subscription_kb,
     sys_channel,
     trial_config,
@@ -1533,3 +1535,19 @@ async def cb_sysch_del(query: CallbackQuery, rt: Runtime):
         await query.message.edit_text(text, reply_markup=kb)
     except Exception:
         pass
+
+
+# ══════════════════════════ ВОРОНКА ══════════════════════════
+
+
+@router.callback_query(F.data == "adm:funnel")
+async def cb_funnel(query: CallbackQuery, rt: Runtime):
+    if not _is_admin(rt, query.from_user.id):
+        return
+    text7 = await funnel_text(rt, 7)
+    text30 = await funnel_text(rt, 30)
+    await query.message.edit_text(
+        text7 + "\n\n" + "─" * 18 + "\n\n" + text30,
+        reply_markup=admin_back(),
+    )
+    await query.answer()

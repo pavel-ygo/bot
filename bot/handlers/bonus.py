@@ -121,6 +121,7 @@ async def _grant_trial(rt: Runtime, bot: Bot, query: CallbackQuery, tcfg: dict,
         await query.message.answer(texts.ERROR_DELIVERY)
         return
     await rt.db.mark_trial_used(query.from_user.id)
+    await rt.db.log_event(query.from_user.id, "trial_issued", f"{days}d")
     await rt.db.add_payment(
         query.from_user.id, "trial", "trial", "0", "-",
         status="delivered", note=f"trial {days}d / {tcfg['traffic_gb']}gb",

@@ -66,6 +66,8 @@ async def cmd_start(message: Message, rt: Runtime, bot: Bot):
         message.from_user.first_name, source=source, referred_by=referred_by,
     )
     if created:
+        await rt.db.log_event(message.from_user.id, "user_started",
+                              source or referred_by or "")
         await sys_new_user(
             rt, bot, message.from_user.id,
             message.from_user.first_name or "—", source, referred_by,

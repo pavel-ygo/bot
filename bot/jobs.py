@@ -347,3 +347,40 @@ async def activation_nudge(rt: Runtime, bot: Bot) -> None:
         except Exception:
             log.exception("activation nudge error")
         await asyncio.sleep(3 * 3600)
+
+
+async def funnel_tracker(rt: Runtime, bot: Bot) -> None:
+    """Каждый час проходит по юзерам панели и пишет события воронки:
+    sub_opened (подписка открывалась), traffic_started (пошёл трафик),
+    trial_expired (истёк триал). Каждое — один раз на юзера."""
+    await asyncio.sleep(600)
+    while True:
+        try:
+            async for u in rt.remna.iter_users():
+                tg_raw = u.get("telegramId")
+                if not tg_raw:
+                    continue
+                try:
+                    tg_id = int(tg_raw)
+                except (TypeError, ValueError):
+                    continue
+
+                # подписка открывалась
+                if u.get("subLastOpenedAt") or u.get("subLastUserAgent"):
+                    await rt.db.log_event(tg_id, "sub_opened")
+
+                # трафик
+                used = u.get("usedTrafficBytes")
+                if used is None:
+                    used = (u.get("userTraffic") or {}).get("usedTrafficBytes")
+                if used and int(used) > 1024 * 1024:
+                    await rt.db.log_event(tg_id, "traffic_started", f"{used}b")
+
+                # истёкший триал
+                tag = str(u.get("tag") or "")
+                expire = parse_iso(u.get("expireAt"))
+                if "trial" in tag and expire and expire < utcnow():
+                        await rt.db.log_event(tg_id, "trial_expired")
+        except Exception:
+            log.exception("funnel tracker error")
+        await asyncio.sleep(3600)

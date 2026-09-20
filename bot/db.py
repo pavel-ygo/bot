@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS pay_cards (
     enabled INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id      INTEGER NOT NULL,
+    event      TEXT NOT NULL,
+    meta       TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_tg_event ON events (tg_id, event);
+
 CREATE TABLE IF NOT EXISTS node_alerts (
     node_uuid  TEXT PRIMARY KEY,
     node_name  TEXT NOT NULL,
@@ -885,3 +894,63 @@ class Database:
             (value,),
         ) as cur:
             return await cur.fetchone() is not None
+
+    # ── события воронки ────────────────────────────────────────────────
+
+    async def log_event(self, tg_id: int, event: str, meta: str = "") -> bool:
+        """Пишет событие один раз на пользователя (для воронки). False — уже было."""
+        async with self._db.execute(
+            "SELECT 1 FROM events WHERE tg_id = ? AND event = ? LIMIT 1",
+            (tg_id, event),
+        ) as cur:
+            if await cur.fetchone():
+                return False
+        await self._db.execute(
+            "INSERT INTO events (tg_id, event, meta, created_at) VALUES (?, ?, ?, ?)",
+            (tg_id, event, meta[:200], utcnow().isoformat()),
+        )
+        await self._db.commit()
+        return True
+
+    async def events_count_since(self, event: str, days: int) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM events WHERE event = ? "
+            "AND created_at >= datetime('now', ?)",
+            (event, f"-{days} days"),
+        ) as cur:
+            return (await cur.fetchone())[0] or 0
+
+    async def users_count_since(self, days: int) -> int:
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE created_at >= datetime('now', ?)",
+            (f"-{days} days",),
+        ) as cur:
+            return (await cur.fetchone())[0] or 0
+
+    async def paid_users_count_since(self, days: int) -> int:
+        async with self._db.execute(
+            """
+            SELECT COUNT(DISTINCT tg_id) FROM payments
+            WHERE status IN ('paid','delivered')
+              AND provider IN ('stars','cryptobot','yookassa','card')
+              AND created_at >= datetime('now', ?)
+            """,
+            (f"-{days} days",),
+        ) as cur:
+            return (await cur.fetchone())[0] or 0
+
+    # ── лимиты авто-подтверждения ──────────────────────────────────────
+
+    async def card_paid_today(self, tg_id: int | None = None) -> int:
+        """Оплат картой за сегодня (у юзера или всего)."""
+        if tg_id is not None:
+            q = ("SELECT COUNT(*) FROM payments WHERE provider='card' "
+                 "AND status IN ('paid','delivered') AND tg_id = ? "
+                 "AND paid_at >= date('now')")
+            args: tuple = (tg_id,)
+        else:
+            q = ("SELECT COUNT(*) FROM payments WHERE provider='card' "
+                 "AND status IN ('paid','delivered') AND paid_at >= date('now')")
+            args = ()
+        async with self._db.execute(q, args) as cur:
+            return (await cur.fetchone())[0] or 0

@@ -131,6 +131,19 @@ async def process_card_receipt(rt: Runtime, bot: Bot, message: Message) -> bool:
 
     auto = await rt.db.get_setting("auto_approve_receipts", "0") == "1"
     if auto:
+        # ── анти-фрод лимиты: превышены — откатываемся в ручной режим ──
+        per_user = int(await rt.db.get_setting("auto_max_per_user_day", "1") or 1)
+        per_day = int(await rt.db.get_setting("auto_max_per_day", "10") or 10)
+        user_today = await rt.db.card_paid_today(message.from_user.id)
+        all_today = await rt.db.card_paid_today()
+        if user_today >= per_user or all_today >= per_day:
+            auto = False
+            await rt.db.log_event(
+                message.from_user.id, "auto_fallback_manual",
+                f"user_today={user_today}/{per_user} all_today={all_today}/{per_day}",
+            )
+            log.info("auto-approve limit hit: user=%s all=%s", user_today, all_today)
+    if auto:
         # ── доверительный режим: выдаём подписку сразу, админ проверяет постфактум ──
         if not await rt.db.claim_payment(pid, "paid"):
             await message.answer(texts.CARD_ALREADY_DONE)

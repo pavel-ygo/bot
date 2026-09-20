@@ -98,7 +98,10 @@ def no_sub_menu() -> InlineKeyboardMarkup:
 
 def admin_menu() -> InlineKeyboardMarkup:
     return _kb([
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats"),
+            InlineKeyboardButton(text="📊 Воронка", callback_data="adm:funnel"),
+        ],
         [
             InlineKeyboardButton(text="📡 Ноды", callback_data="adm:nodes"),
             InlineKeyboardButton(text="🔧 Проверка панели", callback_data="adm:check"),
