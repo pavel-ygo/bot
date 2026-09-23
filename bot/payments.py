@@ -40,12 +40,14 @@ class CryptoBotProvider:
         return data["result"]
 
     async def create_invoice(
-        self, *, amount: float, description: str, payload: str, ttl_seconds: int = 3600
+        self, *, amount: float, description: str, payload: str,
+        ttl_seconds: int = 3600, asset: str = "RUB",
     ) -> dict:
-        """Возвращает dict с invoice_id, bot_invoice_url / pay_url и т.п."""
+        """Создаёт инвойс. asset="RUB" — клиент платит рублями (картой/СБП через Wallet),
+        на баланс падает сумма в рублёвом эквиваленте CryptoBot."""
         return await self._call(
             "createInvoice",
-            asset="USDT",
+            asset=asset,
             amount=f"{amount:.2f}",
             description=description,
             payload=payload,

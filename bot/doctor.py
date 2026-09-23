@@ -89,7 +89,7 @@ async def main() -> int:
         finally:
             await cb.aclose()
     elif cfg.cryptobot_token:
-        print(f"{WARN} CryptoBot: токен задан, но ни у одного тарифа нет price_usdt")
+        print(f"{WARN} CryptoBot: токен задан, но не включён в админке или нет тарифов с ценой")
     if cfg.yookassa_shop_id and not cfg.yookassa_enabled:
         print(f"{WARN} ЮKassa: реквизиты заданы не полностью или нет price_rub у тарифов")
 

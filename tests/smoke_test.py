@@ -410,6 +410,17 @@ async def test_card_provider():
         await rt.db.set_setting("pay_stars", "1")
         providers = await rt.available_providers(tariff)
         check("stars re-enabled", providers["stars"] is True)
+
+        # CryptoBot: доступен по рублёвой цене + токен (объект-заглушка)
+        class FakeCB:
+            pass
+        rt.cryptobot = FakeCB()
+        await rt.db.set_setting("pay_cryptobot", "1")
+        providers = await rt.available_providers(tariff)
+        check("cryptobot via RUB price", providers["cryptobot"] is True)
+        await rt.db.set_setting("pay_cryptobot", "0")
+        providers = await rt.available_providers(tariff)
+        check("cryptobot toggle off", providers["cryptobot"] is False)
     finally:
         await db.close()
 

@@ -118,7 +118,7 @@ class Runtime:
             "stars": bool(tariff.price_stars)
             and self.cfg.stars_enabled
             and await self.db.get_setting("pay_stars", "0") == "1",
-            "cryptobot": bool(self.cryptobot and tariff.price_usdt)
+            "cryptobot": bool(self.cryptobot and tariff.price_rub)
             and await self.db.get_setting("pay_cryptobot", "0") == "1",
         }
 

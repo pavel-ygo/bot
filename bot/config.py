@@ -80,7 +80,7 @@ class Config:
 
     @property
     def cryptobot_enabled(self) -> bool:
-        return bool(self.cryptobot_token) and any(t.price_usdt for t in self.tariffs.values())
+        return bool(self.cryptobot_token) and any(t.price_rub for t in self.tariffs.values())
 
     @property
     def yookassa_enabled(self) -> bool:

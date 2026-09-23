@@ -111,14 +111,15 @@ async def cb_pay(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot)
         await query.answer()
 
     elif provider == "cryptobot":
-        if not (rt.cryptobot and tariff.price_usdt):
+        if not (rt.cryptobot and tariff.price_rub):
             await query.answer("Оплата криптой недоступна", show_alert=True)
             return
         try:
             invoice = await rt.cryptobot.create_invoice(
-                amount=tariff.price_usdt,
+                amount=tariff.price_rub,
                 description=f"{tariff.title} — доступ на {tariff.days} дн.",
                 payload=f"{tg_id}:{tariff.id}",
+                asset="RUB",
             )
         except ProviderError as e:
             log.error("cryptobot create_invoice: %s", e)
@@ -126,13 +127,13 @@ async def cb_pay(query: CallbackQuery, state: FSMContext, rt: Runtime, bot: Bot)
             return
         url = rt.cryptobot.pay_url(invoice)
         payment_id = await rt.db.add_payment(
-            tg_id, tariff.id, "cryptobot", f"{tariff.price_usdt:.2f}", "USDT",
+            tg_id, tariff.id, "cryptobot", f"{tariff.price_rub:.2f}", "RUB",
             ext_id=str(invoice.get("invoice_id")),
         )
         await query.message.edit_text(
             texts.PAYMENT_CREATED.format(
                 title=tariff.title, days=tariff.days,
-                amount=f"{tariff.price_usdt:g} USDT", hint=texts.PAY_LINK_HINT,
+                amount=f"{tariff.price_rub:g} ₽", hint=texts.PAY_LINK_HINT,
             ),
             reply_markup=pay_link_menu(url, payment_id) if url else None,
         )
